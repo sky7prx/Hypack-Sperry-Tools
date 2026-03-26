@@ -1,0 +1,1100 @@
+Option Explicit
+
+Type Point
+    X As Double
+    Y As Double
+End Type
+
+'This conversion script was written by Anthony Imberi (anthony.imberi@noaa.gov)
+'Written August 2025
+'This script can be used to convert Hypack LNW files into route files that can be imported to a Sperry ECDIS
+Sub readLnw(Optional inputFile As String)
+    Dim name As String, prefix As String, suffix As String, speed As Double, dpm As Double, xtd As Double, reverse As Boolean, utmZone As Integer
+    Dim lineName As String, wptName As String, lat As Double, lon As Double
+    'Dim fso As Object, ts As Object
+    Dim textLine As String, text As String
+    Dim foundRoutes() As Integer, foundWpts() As Integer, routeCount As Integer, wptCount As Integer, strPosition As Integer, rteEndPos As Integer
+    Dim routeData() As Variant
+    
+    'Ask for the source file
+    If inputFile = "" Then
+        name = Application.GetOpenFilename("Hypack Line Files (*.lnw),*.lnw,All Files (*.*),*.*")
+    Else
+        name = inputFile
+    End If
+    
+    
+    If name = "False" Then GoTo EndEarly
+    
+    'Load in the settings from the spreadsheet
+    prefix = CStr(Range("C2").Value)
+    suffix = CStr(Range("C3").Value)
+    speed = CDbl(Range("C4").Value)
+    dpm = CDbl(Range("C5").Value)
+    xtd = CDbl(Range("C6").Value)
+    reverse = Range("C7").Value = "Yes"
+    
+    'Open the source file and read its contents into a string
+    'Set fso = CreateObject("Scripting.FileSystemObject")
+    'Set ts = fso.OpenTextFile(name, ForReading)
+    
+    'Do While Not ts.AtEndOfStream
+    '    textLine = ts.ReadLine
+    '    text = text + textLine + vbCrLf
+    'Loop
+    
+    'ts.Close
+    'Set ts = Nothing
+    'Set fso = Nothing
+    
+    'Open the source file and read its contents into a string
+    Open name For Input As #1
+        Do Until EOF(1)
+            Line Input #1, textLine
+            text = text + textLine + vbCrLf
+        Loop
+    Close #1
+    
+    If InStr(1, text, "ZON ", vbTextCompare) <= 0 Then
+        utmZone = CInt(Range("C8").Value)
+    Else
+        utmZone = CInt(ExtractNumbers(Mid(text, InStr(1, text, "ZON ", vbTextCompare) + 4, 2)))
+    End If
+    
+    strPosition = 1
+    routeCount = 0
+    
+    'Search for all of the routes in the source file
+    Do While InStr(strPosition, text, "LIN ", vbTextCompare) > 0
+        strPosition = InStr(strPosition, text, "LIN ", vbTextCompare)
+        routeCount = routeCount + 1
+        ReDim Preserve foundRoutes(1 To routeCount)
+        foundRoutes(routeCount) = strPosition
+        strPosition = strPosition + Len("LIN ")
+    Loop
+    
+    ReDim routeDetails(1 To routeCount + 1, 1 To 1)
+    Dim maxWpt As Integer
+    maxWpt = 0
+    
+    Dim namePos As Integer, nameClosePos As Integer, searchStrA As String, searchStrB As String
+    Dim i As Integer
+    For i = 1 To routeCount
+        searchStrA = "LNN "
+        searchStrB = vbCrLf
+        namePos = InStr(foundRoutes(i), text, searchStrA, vbTextCompare) + Len(searchStrA)
+        nameClosePos = InStr(namePos, text, searchStrB)
+        lineName = Mid(text, namePos, nameClosePos - namePos)
+        
+        'Set the route names
+        If (IsNumeric(lineName)) Then
+            If CInt(lineName) < 10 And CInt(lineName) >= 0 Then
+                lineName = "0" & lineName
+            ElseIf CInt(lineName) > -10 And CInt(lineName) < 0 Then
+                lineName = "-0" & Abs(CInt(lineName))
+            End If
+        End If
+        
+        If prefix <> "" Then lineName = prefix & lineName
+        If suffix <> "" Then lineName = lineName & suffix
+        
+        'Find all of the waypoints in all of the routes
+        wptCount = 0
+        strPosition = foundRoutes(i)
+        rteEndPos = InStr(foundRoutes(i), text, "EOL", vbTextCompare)
+        Do While InStr(strPosition, text, "PTS ", vbTextCompare) > 0 And InStr(strPosition, text, "PTS ", vbTextCompare) < rteEndPos
+            strPosition = InStr(strPosition, text, "PTS ", vbTextCompare) + Len("PTS ")
+            wptCount = wptCount + 1
+            ReDim Preserve foundWpts(1 To wptCount)
+            foundWpts(wptCount) = strPosition
+            strPosition = strPosition + Len("PTS ")
+        Loop
+        
+        If (maxWpt < wptCount) Then
+            ReDim Preserve routeDetails(1 To routeCount + 1, 1 To (wptCount * 2) + 1)
+            maxWpt = wptCount
+        End If
+        
+        routeDetails(1 + i, 1) = lineName
+        
+        'Format the waypoints and then convert the easting and northing coordinates to Lat/Lon
+        Dim j As Integer, eastPos As Integer, northPos As Integer, eastDigits As Integer, northDigits As Integer, easting As Double, northing As Double, eastingPrev As Double, northingPrev As Double, latlon() As Double, pt1 As Point, pt2 As Point
+        Dim jCount As Integer
+        jCount = 1 ' This will count the waypoints that are saved and not the ones that are skipped
+        For j = 1 To wptCount
+            If (j < 10) Then
+                wptName = "WPT 0" & j ' Add a zero to single digit waypoint names
+            Else
+                wptName = "WPT " & j
+            End If
+
+            routeDetails(1, j * 2) = wptName & " Lat"
+            routeDetails(1, 1 + (j * 2)) = wptName & " Lon"
+            
+            eastPos = foundWpts(j)
+            eastDigits = InStr(eastPos, text, " ", vbTextCompare) - eastPos
+            northPos = InStr(eastPos, text, " ", vbTextCompare) + 1
+            northDigits = InStr(northPos, text, vbCrLf, vbTextCompare) - northPos
+            
+            easting = CDbl(Mid(text, eastPos, eastDigits))
+            northing = CDbl(Mid(text, northPos, northDigits))
+            
+            latlon = UTMtoLatLon(easting, northing, utmZone)
+            
+            lat = latlon(0)
+            lon = latlon(1)
+            
+            If jCount > 1 Then
+                pt1.Y = northingPrev ' Northing of previous waypoint
+                pt1.X = eastingPrev ' Easting of previous waypoint
+                pt2.Y = northing
+                pt2.X = easting
+                
+                If MetersToNM(Distance(pt1, pt2)) > RadiusCalc(speed, dpm) Then
+                    routeDetails(1 + i, jCount * 2) = lat ' Save Lat if the distance between points exceeds the turn radius
+                    routeDetails(1 + i, 1 + (jCount * 2)) = lon ' Save Lon if the distance between points exceeds the turn radius
+                    jCount = jCount + 1
+                Else
+                    Debug.Print "WPT " & j & " skipped because the turn radius is greater than its distance to the previous waypoint"
+                    Debug.Print "distance:", MetersToNM(Distance(pt1, pt2)), "radius:", RadiusCalc(speed, dpm)
+                End If
+            
+            Else
+                routeDetails(1 + i, jCount * 2) = lat ' Save the Lat of the first waypoint
+                routeDetails(1 + i, 1 + (jCount * 2)) = lon ' Save the Lon of the first waypoint
+                jCount = jCount + 1
+            End If
+            
+            northingPrev = northing
+            eastingPrev = easting
+        Next j
+    Next i
+    routeDetails(1, 1) = "Line Name"
+    
+    ' If there are any line names that are identical, add a sequential number to them to differentiate
+    Dim duplicates As Integer
+    For i = LBound(routeDetails, 1) To UBound(routeDetails, 1)
+        duplicates = 0
+        For j = LBound(routeDetails, 1) To UBound(routeDetails, 1)
+            If routeDetails(i, 1) = routeDetails(j, 1) Then
+                duplicates = duplicates + 1
+                If duplicates > 1 Then routeDetails(j, 1) = routeDetails(j, 1) & "." & duplicates
+            End If
+        Next j
+        If duplicates > 1 Then routeDetails(i, 1) = routeDetails(i, 1) & ".1"
+    Next i
+    
+    ' Now work on setting up the output files and write to them
+    Dim path As String, outfileName As String, outfileNameRev As String
+    If (InStrRev(name, "/") > 0) Then 'This enables compatibility with either Mac/Linux or Windows
+        path = Left(name, InStrRev(name, "/"))
+    Else
+        path = Left(name, InStrRev(name, "\"))
+    End If
+    
+    If inputFile = "" And Range("C9").Value = "Yes" Then
+        DeleteFile (path & "*.rtz")
+    End If
+    
+    Dim r As Integer, C As Integer, startLaz() As Integer, endLaz() As Integer, lineWptNum() As Integer
+    ReDim startLaz(1 To routeCount + 1)
+    ReDim endLaz(1 To routeCount + 1)
+    ReDim lineWptNum(1 To routeCount + 1)
+    For r = LBound(routeDetails, 1) To UBound(routeDetails, 1)
+        If r = 1 Then
+            GoTo NextRowIteration1
+        End If
+        
+        If routeDetails(r, 2) = "" Then
+            GoTo NextRowIteration1
+        End If
+        
+        'Find the line azimuth so we can specify it in the file name
+        Dim lazBase As Integer, lazRev As Integer
+        
+        If routeDetails(r, 2) <> "" And routeDetails(r, 3) <> "" And routeDetails(r, 4) <> "" And routeDetails(r, 5) <> "" Then
+            lazBase = CInt(calcLaz(CDbl(routeDetails(r, 2)), CDbl(routeDetails(r, 3)), CDbl(routeDetails(r, 4)), CDbl(routeDetails(r, 5))))
+        End If
+        
+        ' Save a list of start and end azimuths so we can compare to find lines that should be combined
+        startLaz(r) = lazBase
+        i = 2
+        Do While i <= (maxWpt * 2) - 2
+            If routeDetails(r, i) <> "" And routeDetails(r, i + 1) <> "" And routeDetails(r, i + 2) <> "" And routeDetails(r, i + 3) <> "" Then
+                endLaz(r) = CInt(calcLaz(CDbl(routeDetails(r, i)), CDbl(routeDetails(r, i + 1)), CDbl(routeDetails(r, i + 2)), CDbl(routeDetails(r, i + 3))))
+                lineWptNum(r) = (i / 2) + 1
+            End If
+            i = i + 2
+        Loop
+        
+NextRowIteration1:
+    Next r
+    
+    ' Disable the line combination algorythm because it's pretty buggy
+    'Dim n As Integer, wpt0 As Point, wpt1 As Point, wpt2 As Point
+    'n = 3
+    'Do While n <= routeCount + 1
+    '    wpt0.Y = CDbl(routeDetails(n - 1, (lineWptNum(n - 1) - 1) * 2))
+    '    wpt0.X = CDbl(routeDetails(n - 1, ((lineWptNum(n - 1) - 1) * 2) + 1))
+    '    wpt1.Y = CDbl(routeDetails(n - 1, lineWptNum(n - 1) * 2))
+    '    wpt1.X = CDbl(routeDetails(n - 1, (lineWptNum(n - 1) * 2) + 1))
+    '    wpt2.Y = CDbl(routeDetails(n, 2))
+    '    wpt2.X = CDbl(routeDetails(n, 3))
+    '    If Abs(startLaz(n) - endLaz(n - 1)) <= 20 Then
+    '        If Abs(calcLaz(wpt2.Y, wpt2.X, wpt1.Y, wpt1.X) - startLaz(n)) <= 20 _
+    '            Or CrossTrackDistance(wpt0, wpt1, wpt2) <= 20 Then
+    '            routeDetails(n - 1, 1) = routeDetails(n - 1, 1) & "-" & ExtractNumbers(routeDetails(n, 1))
+    '            routeDetails(n, 1) = "$$Skip$$"
+    '            If lineWptNum(n) + lineWptNum(n - 1) > maxWpt Then
+    '                maxWpt = lineWptNum(n) + lineWptNum(n - 1)
+    '                ReDim Preserve routeDetails(1 To routeCount + 1, 1 To (maxWpt * 2) + 1)
+    '            End If
+    '
+    '            i = 1
+    '            Do While i <= lineWptNum(n)
+    '                If i <> 1 Or Distance(wpt1, wpt2) >= 50 Then
+    '                    routeDetails(n - 1, (lineWptNum(n - 1) * 2) + (i * 2)) = routeDetails(n, i * 2)
+    '                    routeDetails(n - 1, (lineWptNum(n - 1) * 2) + (i * 2) + 1) = routeDetails(n, (i * 2) + 1)
+    '                End If
+    '                i = i + 1
+    '            Loop
+    '        End If
+    '    End If
+    '    n = n + 1
+    'Loop
+    
+    
+    For r = LBound(routeDetails, 1) To UBound(routeDetails, 1)
+        If r = 1 Then
+            GoTo NextRowIteration2
+        End If
+        
+        If routeDetails(r, 2) = "" Then
+            GoTo NextRowIteration2
+        End If
+    
+        If routeDetails(r, 1) = "$$Skip$$" Then
+            GoTo NextRowIteration2
+        End If
+        
+        Dim lazBaseStr As String, lazRevStr As String
+        lazBaseStr = CStr(startLaz(r))
+        lazRevStr = CStr(((endLaz(r) + 180) + 360) Mod 360)
+        
+        Do While Len(lazBaseStr) < 3
+            lazBaseStr = "0" & lazBaseStr
+        Loop
+        Do While Len(lazRevStr) < 3
+            lazRevStr = "0" & lazRevStr
+        Loop
+        
+        If routeDetails(r, 1) = "" Then
+            If r < 10 Then
+                routeDetails(r, 1) = "0" & r
+            Else
+                routeDetails(r, 1) = r
+            End If
+            If prefix <> "" Then routeDetails(r, 1) = prefix & routeDetails(r, 1)
+            If suffix <> "" Then routeDetails(r, 1) = routeDetails(r, 1) & suffix
+        End If
+        
+        outfileName = path & routeDetails(r, 1) & " LAZ " & lazBaseStr & ".rtz"
+        outfileNameRev = path & routeDetails(r, 1) & " LAZ " & lazRevStr & ".rtz"
+        
+        'Open the output file and the reverse output file, if requested
+        Open outfileName For Output As #1
+        If reverse Then Open outfileNameRev For Output As #2
+        
+        'Print the XML header
+        Print #1, "<?xml version=""1.0"" encoding=""utf-8""?>"
+        Print #1, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
+        
+        If reverse Then
+            Print #2, "<?xml version=""1.0"" encoding=""utf-8""?>"
+            Print #2, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
+        End If
+  
+        'Print the Route Name
+        Print #1, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazBaseStr & """ />"
+        
+        If reverse Then Print #2, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazRevStr & """ />"
+            
+        'Print the section header and the default waypoint info
+        Print #1, vbTab & "<waypoints>"
+        Print #1, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
+        Print #1, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
+        Print #1, vbTab & vbTab & "</defaultWaypoint>"
+        
+        If reverse Then
+            Print #2, vbTab & "<waypoints>"
+            Print #2, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
+            Print #2, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
+            Print #2, vbTab & vbTab & "</defaultWaypoint>"
+        End If
+            
+        Dim colLat As Double, colLon As Double, wptNum As Integer
+        
+        For C = LBound(routeDetails, 2) To UBound(routeDetails, 2)
+            If C = 1 Then
+                wptNum = 1
+            ElseIf C Mod 2 = 0 Then
+                If routeDetails(r, C) = "" Then GoTo NextColIteration
+                colLat = routeDetails(r, C)
+            ElseIf C Mod 2 = 1 Then
+                If routeDetails(r, C) = "" Then GoTo NextColIteration
+                colLon = routeDetails(r, C)
+                PrintWaypoint wptNum, "WPT " & wptNum, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), True
+                wptNum = wptNum + 1
+            End If
+            
+NextColIteration:
+        Next C
+        
+        If reverse Then
+            For C = UBound(routeDetails, 2) To LBound(routeDetails) Step -1
+                If C = UBound(routeDetails, 2) Then wptNum = 1
+                If C = LBound(routeDetails, 2) Then
+                    GoTo NextColRevIteration
+                ElseIf C Mod 2 = 0 Then
+                    If routeDetails(r, C) = "" Then GoTo NextColRevIteration
+                    colLat = routeDetails(r, C)
+                    
+                    Dim wptNm As String
+                    If True Then
+                        If C < 10 Then
+                            wptNm = "WPT 0" & wptNum
+                        Else
+                            wptNm = "WPT " & wptNum
+                        End If
+                    Else
+                        wptNm = Left(routeDetails(1, C), Len(routeDetails(1, C)) - 4)
+                    End If
+                    
+                    PrintWaypoint wptNum, wptNm, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), False
+                    wptNum = wptNum + 1
+                ElseIf C Mod 2 = 1 Then
+                    If routeDetails(r, C) = "" Then GoTo NextColRevIteration
+                    colLon = routeDetails(r, C)
+                End If
+                
+NextColRevIteration:
+            Next C
+        End If
+        
+        'Close the XML section
+        Print #1, vbTab & "</waypoints>"
+        
+        If reverse Then Print #2, vbTab & "</waypoints>"
+        
+        'Print the Schedule section
+        Dim mytab As String
+        mytab = vbTab & vbTab  'Double tab
+        Print #1, vbTab & "<schedules>"
+        Print #1, mytab & "<schedule id=""1"" name=""Default Schedule"">"
+        Print #1, mytab & vbTab & "<manual>"
+        
+        If reverse Then
+            Print #2, vbTab & "<schedules>"
+            Print #2, mytab & "<schedule id=""1"" name=""Default Schedule"">"
+            Print #2, mytab & vbTab & "<manual>"
+        End If
+        
+        Dim s As Integer
+        For s = 1 To wptNum - 1
+            If s = 1 Then
+                Print #1, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
+                If reverse Then Print #2, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
+            Else
+                Print #1, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
+                If reverse Then Print #2, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
+            End If
+        Next s
+        
+          'Close out the section in the XML
+        Print #1, mytab & vbTab & "</manual>"
+        Print #1, mytab & "</schedule>"
+        Print #1, vbTab & "</schedules>"
+        
+        If reverse Then
+            Print #2, mytab & vbTab & "</manual>"
+            Print #2, mytab & "</schedule>"
+            Print #2, vbTab & "</schedules>"
+        End If
+        
+        'Print the Last part of the file including the Description of the Route
+        Print #1, vbTab & "<extensions>"
+        Print #1, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
+        Print #1, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
+        Print #1, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazBaseStr & "</Description>"
+        Print #1, mytab & mytab & "<Notes />"
+        Print #1, mytab & vbTab & "</AdditionalRouteData>"
+        Print #1, mytab & "</extension>"
+        Print #1, vbTab & "</extensions>"
+        Print #1, "</route>"
+        
+        Close #1
+        
+        If reverse Then
+            Print #2, vbTab & "<extensions>"
+            Print #2, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
+            Print #2, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
+            Print #2, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazRevStr & "</Description>"
+            Print #2, mytab & mytab & "<Notes />"
+            Print #2, mytab & vbTab & "</AdditionalRouteData>"
+            Print #2, mytab & "</extension>"
+            Print #2, vbTab & "</extensions>"
+            Print #2, "</route>"
+        
+            Close #2
+        End If
+        
+NextRowIteration2:
+    Next r
+    
+    Dim msg As String
+    If reverse Then
+        msg = "Successfully saved " & routeCount & " routes and " & routeCount & " reversed routes to the folder containing the Hypack output file."
+    Else
+        msg = "Successfully saved " & routeCount & " routes to the folder containing the Hypack output file."
+    End If
+    
+    MsgBox (msg)
+    
+EndEarly:
+    
+End Sub
+
+Private Function CheckName(nm) As String
+   'need to do a regex replace for double quotes
+   GoTo Skip
+   On Error GoTo ErrorHandler
+   Dim rx As New RegExp
+   strPattern = """"""
+   rx.Pattern = strPattern
+   If rx.test(name) Then
+     CheckName = rx.Replace(nm, "")
+   Else
+     CheckName = nm
+   End If
+ErrorHander:
+   Err.Clear
+Skip:
+End Function
+
+'Converts meters to nautical miles
+Private Function MetersToNM(meters)
+  MetersToNM = Format(meters / 1852, "0.000000000000000")
+End Function
+
+'Prints each waypoint
+Private Sub PrintWaypoint(waypointID, waypointName, lat, lon, speed, xtd, radius, firstFile)
+  Dim mytab As String, strName As String
+  mytab = vbTab & vbTab 'double tab
+  'strName = CheckName(waypointName)
+  strName = waypointName
+  If strName = "" Then
+    If waypointID < 10 Then
+        strName = "WPT 0" & waypointID
+    Else
+        strName = "WPT " & waypointID
+    End If
+  End If
+  
+  'If it's the first waypoint, there's no turn so no radius
+  If waypointID = 1 Then
+    If firstFile Then
+        Print #1, mytab & "<waypoint id=""1"" name=""" & strName & """>"
+    Else
+        Print #2, mytab & "<waypoint id=""1"" name=""" & strName & """>"
+    End If
+  Else
+    If firstFile Then
+        Print #1, mytab & "<waypoint id=""" & waypointID & """ name=""" & strName & """ radius=""" & radius & """>"
+    Else
+        Print #2, mytab & "<waypoint id=""" & waypointID & """ name=""" & strName & """ radius=""" & radius & """>"
+    End If
+  End If
+  
+  'Print the position
+  If firstFile Then
+    Print #1, mytab & vbTab & "<position lat=""" & lat & """ lon=""" & lon & """ />"
+  Else
+    Print #2, mytab & vbTab & "<position lat=""" & lat & """ lon=""" & lon & """ />"
+  End If
+  
+  'Print XTD in NM
+  Dim xtdNM As String
+  If waypointID > 1 Then
+    xtdNM = MetersToNM(xtd)
+    If firstFile Then
+        Print #1, mytab & vbTab & "<leg starboardXTD=""" & xtdNM & """ portsideXTD=""" & xtdNM & """ />"
+    Else
+        Print #2, mytab & vbTab & "<leg starboardXTD=""" & xtdNM & """ portsideXTD=""" & xtdNM & """ />"
+    End If
+  End If
+  
+  'Determine the turn speeds based on the speed
+  Dim turnSpeed As String, minSpeed As String, maxSpeed As String
+  turnSpeed = Format(0.514444444444441 * speed, "0.000000000000000") 'Converts speed to what Sperry needs for some reason
+  minSpeed = Format(0.514444444444441 * (speed - 2), "0.000000000000000")
+  maxSpeed = Format(0.514444444444441 * (speed + 2), "0.000000000000000")
+  
+  'Print the turn info
+  If firstFile Then
+    Print #1, mytab & vbTab & "<extensions>"
+    Print #1, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalWaypointData"">"
+    Print #1, mytab & mytab & vbTab & "<AdditionalWaypointData TurnSpeed=""" & turnSpeed & """ MinTurnSpeed=""" & minSpeed & """ MaxTurnSpeed=""" & maxSpeed & """ LeftOffTrackAlarmLimitForTurn=""" & xtd & """ RightOffTrackAlarmLimitForTurn=""" & xtd & """ />"
+    Print #1, mytab & mytab & "</extension>"
+    Print #1, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalTrackData"">"
+    Print #1, mytab & mytab & vbTab & "<AdditionalTrackData OffTrackAlarmEnabledForTurn=""true"" OffTrackAlarmEnabledForDepartingLeg=""true"" />"
+    Print #1, mytab & mytab & "</extension>"
+    Print #1, mytab & vbTab & "</extensions>"
+  Else
+    Print #2, mytab & vbTab & "<extensions>"
+    Print #2, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalWaypointData"">"
+    Print #2, mytab & mytab & vbTab & "<AdditionalWaypointData TurnSpeed=""" & turnSpeed & """ MinTurnSpeed=""" & minSpeed & """ MaxTurnSpeed=""" & maxSpeed & """ LeftOffTrackAlarmLimitForTurn=""" & xtd & """ RightOffTrackAlarmLimitForTurn=""" & xtd & """ />"
+    Print #2, mytab & mytab & "</extension>"
+    Print #2, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalTrackData"">"
+    Print #2, mytab & mytab & vbTab & "<AdditionalTrackData OffTrackAlarmEnabledForTurn=""true"" OffTrackAlarmEnabledForDepartingLeg=""true"" />"
+    Print #2, mytab & mytab & "</extension>"
+    Print #2, mytab & vbTab & "</extensions>"
+  End If
+  
+  'Close out the waypoint
+  If firstFile Then
+    Print #1, mytab & "</waypoint>"
+  Else
+    Print #2, mytab & "</waypoint>"
+  End If
+End Sub
+
+'Used to calculate the radius which will set the rate of turn at 100 degrees per minute
+Private Function RadiusCalc(speed As Double, Optional dpm As Double)
+    If dpm = 0 Then dpm = 100 ' dpm specifies the number of degrees per minute to turn
+    RadiusCalc = Format(speed / 60 * (360 / dpm) / (2 * Application.WorksheetFunction.Pi()), "0.000000000000000")
+End Function
+
+' Distance in meters between two lat/lon points
+Private Function Distance(p1 As Point, p2 As Point) As Double
+    Dim utm1() As Double, utm2() As Double
+    
+    If p1.Y < 90 Then
+        utm1 = LatLonToUTM(p1.Y, p1.X)
+        utm2 = LatLonToUTM(p2.Y, p2.X)
+    
+        p1.Y = utm1(0)
+        p1.X = utm1(1)
+        p2.Y = utm2(0)
+        p2.X = utm2(1)
+    End If
+    
+    Distance = Math.Sqr((p1.X - p2.X) ^ 2 + (p1.Y - p2.Y) ^ 2)
+End Function
+
+' Calculate crosstrack distance in meters of a lat/lon point on a line
+Private Function CrossTrackDistance(wpt0 As Point, wpt1 As Point, wpt2 As Point)
+    Dim pt0 As Point, pt1 As Point, pt2 As Point, utm0() As Double, utm1() As Double, utm2() As Double
+    
+    If wpt0.Y > 90 Then
+        utm0 = LatLonToUTM(wpt0.Y, wpt0.X)
+        utm1 = LatLonToUTM(wpt1.Y, wpt1.X)
+        utm2 = LatLonToUTM(wpt2.Y, wpt2.X)
+    
+        pt0.Y = utm0(0)
+        pt0.X = utm0(1)
+        pt1.Y = utm1(0)
+        pt1.X = utm1(1)
+        pt2.Y = utm2(0)
+        pt2.X = utm2(1)
+    Else
+        pt0.X = wpt0.X
+        pt0.Y = wpt0.Y
+        pt1.X = wpt1.X
+        pt1.Y = wpt1.Y
+        pt2.X = wpt2.X
+        pt2.Y = wpt2.Y
+    End If
+    
+    Dim dx As Double, dy As Double, mag2 As Double, t As Double, projX As Double, projY As Double
+    
+    dx = pt1.X - pt0.X
+    dy = pt1.Y - pt0.Y
+    mag2 = dx * dx + dy * dy
+    
+    If mag2 = 0 Then
+        CrossTrackDistance = Math.Sqr((pt2.X - pt0.X) ^ 2 + (pt2.Y - pt0.Y) ^ 2)
+    Else
+        t = ((pt2.X - pt0.X) * dx + (pt2.Y - pt0.Y) * dy) / mag2
+        projX = pt0.X + t * dx
+        projY = pt0.Y + t * dy
+        CrossTrackDistance = Math.Sqr((pt2.X - projX) ^ 2 + (pt2.Y - projY) ^ 2)
+    End If
+    
+End Function
+
+'Calculate the line azimuth between two coordinates (degrees)
+Private Function calcLaz(latOne As Double, lonOne As Double, latTwo As Double, lonTwo As Double) As Double
+    Dim phi1 As Double, phi2 As Double, lam1 As Double, lam2 As Double, dlam As Double
+    Dim Y As Double, X As Double, az As Double
+
+    ' Convert degrees to radians
+    phi1 = latOne * WorksheetFunction.Pi / 180#
+    phi2 = latTwo * WorksheetFunction.Pi / 180#
+    lam1 = lonOne * WorksheetFunction.Pi / 180#
+    lam2 = lonTwo * WorksheetFunction.Pi / 180#
+    dlam = lam2 - lam1
+
+    Y = Sin(dlam) * Cos(phi2)
+    X = Cos(phi1) * Sin(phi2) - Sin(phi1) * Cos(phi2) * Cos(dlam)
+
+    ' Excel ATAN2 takes (x,y)?  WorksheetFunction.Atan2(y, x) returns angle in radians
+    az = WorksheetFunction.Atan2(X, Y) * 180# / WorksheetFunction.Pi
+    If az < 0 Then az = az + 360#
+
+    calcLaz = az
+End Function
+
+'Convert UTM to Lat/Lon Coordinates (WGS84)
+Private Function UTMtoLatLon(E As Double, n As Double, utmZone As Integer) As Double()
+    Dim zone As Integer
+    Dim a As Double, f As Double, e2 As Double, ep2 As Double, kZero As Double
+    Dim FE As Double, FN As Double, lambdaZero As Double
+    Dim X As Double, Y As Double, M As Double, eOne As Double, mu As Double
+    Dim phiOne As Double
+    Dim sinPhi1 As Double, cosPhi1 As Double
+    Dim TOne As Double, COne As Double, NOne As Double, ROne As Double, D As Double
+    Dim latRad As Double, lonRad As Double
+    Dim latlon(1) As Double
+
+    zone = utmZone
+
+    a = 6378137#
+    f = 1 / 298.257223563
+    e2 = f * (2 - f)                 ' eccentricity^2
+    ep2 = e2 / (1 - e2)              ' second eccentricity^2
+    kZero = 0.9996
+    FE = 500000#
+    FN = 0#                          ' Northern hemisphere only in your case; set to 10000000 for southern
+    lambdaZero = (-183 + 6 * zone) * WorksheetFunction.Pi / 180
+
+    X = E - FE
+    Y = n - FN
+
+    M = Y / kZero
+
+    eOne = (1 - Sqr(1 - e2)) / (1 + Sqr(1 - e2))
+    mu = M / (a * (1 - e2 / 4 - 3 * e2 ^ 2 / 64 - 5 * e2 ^ 3 / 256))
+
+    phiOne = mu _
+        + (3 * eOne / 2 - 27 * eOne ^ 3 / 32) * Sin(2 * mu) _
+        + (21 * eOne ^ 2 / 16 - 55 * eOne ^ 4 / 32) * Sin(4 * mu) _
+        + (151 * eOne ^ 3 / 96) * Sin(6 * mu) _
+        + (1097 * eOne ^ 4 / 512) * Sin(8 * mu)
+
+    sinPhi1 = Sin(phiOne)
+    cosPhi1 = Cos(phiOne)
+
+    TOne = Tan(phiOne) ^ 2
+    COne = ep2 * (cosPhi1 ^ 2)                       ' <- fix: cos(phi)^2
+    NOne = a / Sqr(1 - e2 * (sinPhi1 ^ 2))           ' <- fix: sin(phi)^2
+    ROne = NOne * (1 - e2) / (1 - e2 * (sinPhi1 ^ 2))
+    D = X / (NOne * kZero)
+
+    latRad = phiOne - (NOne * Tan(phiOne) / ROne) * _
+        (D ^ 2 / 2 _
+         - (5 + 3 * TOne + 10 * COne - 4 * COne ^ 2 - 9 * ep2) * D ^ 4 / 24 _
+         + (61 + 90 * TOne + 298 * COne + 45 * TOne ^ 2 - 252 * ep2 - 3 * COne ^ 2) * D ^ 6 / 720)
+
+    lonRad = lambdaZero + _
+        (D - (1 + 2 * TOne + COne) * D ^ 3 / 6 + (5 - 2 * COne + 28 * TOne - 3 * COne ^ 2 + 8 * ep2 + 24 * TOne ^ 2) * D ^ 5 / 120) / Cos(phiOne)
+
+    latlon(0) = latRad * 180# / WorksheetFunction.Pi
+    latlon(1) = lonRad * 180# / WorksheetFunction.Pi
+
+    UTMtoLatLon = latlon
+End Function
+
+'Convert Lat/Lon to UTM Coordinates (WGS84)
+Private Function LatLonToUTM(latDeg As Double, lonDeg As Double) As Double()
+    Dim zone As Integer
+    Dim a As Double, f As Double, e2 As Double, ep2 As Double, kZero As Double
+    Dim FE As Double, FN As Double, lambdaZero As Double
+    Dim latRad As Double, lonRad As Double
+    Dim n As Double, t As Double, C As Double, bigA As Double
+    Dim M As Double
+    Dim E As Double, Nnorth As Double
+    Dim utm(1) As Double
+    
+    ' Ellipsoid parameters (WGS84)
+    a = 6378137#
+    f = 1 / 298.257223563
+    e2 = f * (2 - f)                  ' eccentricity^2
+    ep2 = e2 / (1 - e2)               ' second eccentricity^2
+    kZero = 0.9996
+    FE = 500000#
+    
+    ' Determine UTM zone from longitude
+    zone = WorksheetFunction.Floor((lonDeg + 180) / 6, 1) + 1
+    lambdaZero = (-183 + 6 * zone) * WorksheetFunction.Pi / 180#
+    
+    ' Convert input to radians
+    latRad = latDeg * WorksheetFunction.Pi / 180#
+    lonRad = lonDeg * WorksheetFunction.Pi / 180#
+    
+    ' Precompute terms
+    n = a / Sqr(1 - e2 * Sin(latRad) ^ 2)
+    t = Tan(latRad) ^ 2
+    C = ep2 * Cos(latRad) ^ 2
+    bigA = (lonRad - lambdaZero) * Cos(latRad)
+    
+    ' Meridional arc
+    M = a * ((1 - e2 / 4 - 3 * e2 ^ 2 / 64 - 5 * e2 ^ 3 / 256) * latRad _
+        - (3 * e2 / 8 + 3 * e2 ^ 2 / 32 + 45 * e2 ^ 3 / 1024) * Sin(2 * latRad) _
+        + (15 * e2 ^ 2 / 256 + 45 * e2 ^ 3 / 1024) * Sin(4 * latRad) _
+        - (35 * e2 ^ 3 / 3072) * Sin(6 * latRad))
+    
+    ' Easting
+    E = FE + kZero * n * (bigA + (1 - t + C) * bigA ^ 3 / 6 _
+        + (5 - 18 * t + t ^ 2 + 72 * C - 58 * ep2) * bigA ^ 5 / 120)
+    
+    ' Northing (assuming northern hemisphere here)
+    Nnorth = kZero * (M + n * Tan(latRad) * (bigA ^ 2 / 2 _
+        + (5 - t + 9 * C + 4 * C ^ 2) * bigA ^ 4 / 24 _
+        + (61 - 58 * t + t ^ 2 + 600 * C - 330 * ep2) * bigA ^ 6 / 720))
+    
+    ' Return [Easting, Northing]
+    utm(0) = E
+    utm(1) = Nnorth
+    LatLonToUTM = utm
+End Function
+
+' Offset a polyline (UTM coordinates) left or right by given distance.
+' side = "Left" for left, "Right" for right
+' Inputs: arrays E() and N() of same length (polyline vertices)
+' Returns: 2D array (2 x nPoints): result(0,i)=Easting, result(1,i)=Northing
+Public Function OffsetPolyline(E() As Double, n() As Double, dist As Double, side As String) As Double()
+    Dim smN As Long
+    smN = UBound(E) - LBound(E) + 1
+    If smN < 2 Then Err.Raise vbObjectError + 520, , "Polyline must have at least two points."
+    
+    Dim result() As Double
+    ReDim result(1, LBound(E) To UBound(E))
+    
+    Dim i As Long
+    Dim dx As Double, dy As Double, leng As Double
+    Dim px As Double, py As Double
+    Dim prevDx As Double, prevDy As Double
+    Dim nextDx As Double, nextDy As Double
+    Dim sideFactor As Double
+    
+    If side = "Left" Then
+        sideFactor = -1
+    ElseIf side = "Right" Then
+        sideFactor = 1
+    Else
+        Err.Raise vbObjectError + 521, , "Side must be 'Left' or 'Right'."
+    End If
+    
+    ' Loop through vertices
+    For i = LBound(E) To UBound(E)
+        If i = LBound(E) Then
+            ' First point: use segment i->i+1
+            dx = E(i + 1) - E(i)
+            dy = n(i + 1) - n(i)
+        ElseIf i = UBound(E) Then
+            ' Last point: use segment i-1->i
+            dx = E(i) - E(i - 1)
+            dy = n(i) - n(i - 1)
+        Else
+            ' Interior point: average segment before and after
+            prevDx = E(i) - E(i - 1)
+            prevDy = n(i) - n(i - 1)
+            nextDx = E(i + 1) - E(i)
+            nextDy = n(i + 1) - n(i)
+            dx = prevDx + nextDx
+            dy = prevDy + nextDy
+        End If
+        
+        leng = Sqr(dx * dx + dy * dy)
+        If leng = 0 Then
+            px = 0: py = 0
+        Else
+            ' Unit perpendicular vector
+            px = sideFactor * dy / leng
+            py = sideFactor * -dx / leng
+        End If
+        
+        ' Scale and offset
+        result(0, i) = E(i) + px * dist
+        result(1, i) = n(i) + py * dist
+    Next i
+    
+    OffsetPolyline = result
+End Function
+
+
+Function ShiftLine()
+    Dim fileName As String, path As String, meters As Double, rl As String, newName As String
+    Dim text As String, textLine As String, strPosition As Integer, wptCount As Integer, wptPositions() As Integer, wptDetails() As Double
+    
+    fileName = Application.GetOpenFilename("Sperry Route Files (*.rtz),*.rtz,All Files (*.*),*.*")
+    
+    If fileName = "False" Then GoTo EndEarly
+    
+    meters = CDbl(Range("C3").Value)
+    rl = Range("C4").Value
+    
+    If Range("C3").Value = "" Or rl = "" Then
+        MsgBox ("You must specify a number of meters to shift and a direction")
+        GoTo EndEarly
+    End If
+    
+    ' Separate the filename from the path and configure the new file name
+    If (InStrRev(fileName, "/") > 0) Then 'This enables compatibility with either Mac/Linux or Windows
+        path = Left(fileName, InStrRev(fileName, "/"))
+        fileName = Right(fileName, Len(fileName) - InStrRev(fileName, "/"))
+        newName = Left(fileName, Len(fileName) - 4) & " Shift " & CInt(meters) & "m " & rl & ".rtz"
+    Else
+        path = Left(fileName, InStrRev(fileName, "\"))
+        fileName = Right(fileName, Len(fileName) - InStrRev(fileName, "\"))
+        newName = "(" & Left(rl, 1) & meters & "m) " & Left(fileName, Len(fileName) - 4) & ".rtz"
+    End If
+
+    ' Read the route file into memory
+    Open path & fileName For Input As #1
+        Do Until EOF(1)
+            Line Input #1, textLine
+            text = text + textLine + vbCrLf
+        Loop
+    Close #1
+    
+    strPosition = InStr(1, text, "<waypoints", vbTextCompare)
+    wptCount = 0
+    
+    ' Search for all waypoints in the route file
+    Do While InStr(strPosition, text, "<position", vbTextCompare) > 0
+        strPosition = InStr(strPosition, text, "<position", vbTextCompare)
+        wptCount = wptCount + 1
+        ReDim Preserve wptPositions(1 To wptCount)
+        wptPositions(wptCount) = strPosition
+        strPosition = strPosition + Len("<position")
+    Loop
+    
+    ReDim wptDetails(0 To 1, 0 To wptCount - 1)
+    
+    Dim E() As Double, n() As Double, shifted() As Double, conversion() As Double
+    Dim count As Integer, latPos As Integer, lat As Double, lonPos As Integer, lon As Double
+    ReDim E(0 To wptCount - 1)
+    ReDim n(0 To wptCount - 1)
+    
+    ' Save all of the waypoints as Lat/Lon and also as UTM Easting/Northing
+    count = 0
+    Do While count < wptCount
+        count = count + 1
+        latPos = InStr(wptPositions(count), text, "lat=""", vbTextCompare) + 5
+        lat = Mid(text, latPos, InStr(latPos, text, """", vbTextCompare) - latPos)
+        lonPos = InStr(wptPositions(count), text, "lon=""", vbTextCompare) + 5
+        lon = Mid(text, lonPos, InStr(lonPos, text, """", vbTextCompare) - lonPos)
+        
+        wptDetails(0, count - 1) = lat
+        wptDetails(1, count - 1) = lon
+        conversion = LatLonToUTM(lat, lon)
+        E(count - 1) = conversion(0)
+        n(count - 1) = conversion(1)
+    Loop
+    
+    ' Shift the UTM coordinates right or left by the number of meters specified
+    shifted = OffsetPolyline(E, n, meters, rl)
+    
+    Dim newLatLon() As Double, latlon() As Double, zone As Integer
+    ReDim newLatLon(0 To 1, 0 To wptCount - 1)
+    ReDim latlon(0 To 1)
+    
+    ' Convert the UTM coordinates back to Lat/Lon
+    count = 0
+    Do While count < wptCount
+        zone = WorksheetFunction.Floor((wptDetails(1, count) + 180) / 6, 1) + 1
+        latlon = UTMtoLatLon(shifted(0, count), shifted(1, count), zone)
+        newLatLon(0, count) = latlon(0)
+        newLatLon(1, count) = latlon(1)
+        count = count + 1
+    Loop
+    
+    ' Update the route description
+    text = Replace(text, Left(fileName, Len(fileName) - 4), Left(newName, Len(newName) - 4))
+    
+    ' Replace the original coordinates with the new ones
+    strPosition = InStr(1, text, "<waypoints", vbTextCompare)
+    count = 0
+    Do While InStr(strPosition, text, "<position", vbTextCompare) > 0
+        strPosition = InStr(strPosition, text, "<position", vbTextCompare)
+        text = Left(text, strPosition - 1) & Replace(text, "lat=""" & CStr(wptDetails(0, count)), "lat=""" & CStr(newLatLon(0, count)), strPosition, 1, vbTextCompare)
+        text = Left(text, strPosition - 1) & Replace(text, "lon=""" & CStr(wptDetails(1, count)), "lon=""" & CStr(newLatLon(1, count)), strPosition, 1, vbTextCompare)
+        count = count + 1
+        strPosition = strPosition + 5
+    Loop
+    
+    ' Output the new file
+    Open path & newName For Output As #1
+        Print #1, text
+    Close #1
+    
+EndEarly:
+    
+End Function
+
+Function ExtractNumbers(str)
+    Dim regex As RegExp, matches As MatchCollection, mtch As Match, result As Double
+    
+    Set regex = New RegExp
+    regex.Pattern = "-?\d+(\.\d+)?"
+    regex.Global = False
+    
+    If regex.test(str) = True Then
+        Set matches = regex.Execute(str)
+        For Each mtch In matches
+            result = mtch
+        Next
+    End If
+    
+    ExtractNumbers = result
+    
+End Function
+
+Function ReadRawFiles()
+    Dim fso As Object, dt As Object, folder As Object, file As Object, fileNames() As String, folderPath As String, outputPath As String
+    Dim count As Integer, hoursBack As Double, utmZone As Variant, centMer As Integer
+    Dim text As String, textLine As String, textFiles() As String, f As textStream
+    
+    utmZone = False
+
+    ' Load configuration data
+    folderPath = CStr(Range("F2").Value)
+    outputPath = CStr(Range("F3").Value)
+    hoursBack = CDbl(Range("F4").Value)
+    
+    ' Check formatting of the path
+    If Right(folderPath, 1) <> "\" Then
+        folderPath = folderPath & "\"
+    End If
+    If Right(folderPath, 4) <> "Raw\" Then
+        folderPath = folderPath & "Raw\"
+    End If
+    If Right(outputPath, 1) <> "\" Then
+        outputPath = outputPath & "\"
+    End If
+
+    ' Create a FileSystemObject
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    ' Get the folder object
+    Set folder = fso.GetFolder(folderPath)
+
+    count = 0
+    ' Loop through each file in the folder
+    For Each file In folder.files
+        ' Perform actions with each file, e.g., print its name
+        If file.name Like "####*.RAW" Then
+            If isBetween(file.name, hoursBack) Then
+                count = count + 1
+                ReDim Preserve fileNames(1 To count)
+                fileNames(count) = file.name
+            End If
+        End If
+    Next file
+    
+    If count = 0 Then
+        MsgBox ("No routes found in project folder.")
+        GoTo EndReadEarly
+    End If
+    
+    ReDim textFiles(1 To UBound(fileNames))
+    Dim keepSearching As Boolean, startWriting As Boolean
+    Dim i As Integer
+    For i = LBound(fileNames) To UBound(fileNames)
+        
+        ' Open each matching file and read their contents
+        count = 0
+        text = ""
+        keepSearching = True
+        startWriting = False
+        utmZone = False
+        Set f = fso.OpenTextFile(folderPath & fileNames(i), ForReading)
+            Do While keepSearching
+                textLine = f.ReadLine
+                If textLine Like "INI ZoneName=*" Then
+                    utmZone = CInt(ExtractNumbers(Mid(textLine, 19, 2)))
+                    'text = text & "ZON " & utmZone & vbCrLf
+                End If
+                If textLine Like "INI CentralMeridian=*" Then
+                    centMer = CInt(ExtractNumbers(Mid(textLine, Len("INI CentralMeridian="), 4)))
+                End If
+                If textLine Like "LIN #*" Then startWriting = True
+                If startWriting Then
+                    If textLine Like "LBP*" Then
+                        ' Do Nothing
+                    Else
+                        text = text & textLine & vbCrLf
+                        count = count + 1
+                    End If
+                End If
+                If textLine Like "EOL*" Then keepSearching = False
+            Loop
+        f.Close
+        textFiles(i) = text
+    Next i
+    
+    If Range("C8").Value = "Yes" Then
+        DeleteFile (outputPath & "*.rtz")
+        ' DeleteFile (outputPath & "*.lnw")
+    End If
+    
+    Set f = fso.CreateTextFile(outputPath & "autolines.lnw", True)
+    If utmZone = False Then
+        utmZone = CInt(WorksheetFunction.Floor((centMer + 180) / 6, 1) + 1)
+    End If
+    f.WriteLine "ZON " & utmZone
+    f.WriteLine ("LNS " & UBound(textFiles))
+    Dim strPos As Integer
+    For i = LBound(textFiles) To UBound(textFiles)
+        f.Write (textFiles(i))
+    Next i
+    
+    outputPath = outputPath & "autolines.lnw"
+    readLnw outputPath
+    
+EndReadEarly:
+Debug.Print "Execution finished"
+
+    ' Clean up objects
+    Set file = Nothing
+    Set folder = Nothing
+    Set fso = Nothing
+End Function
+
+Function isBetween(fileName As String, hoursBack As Double) As Boolean
+    Dim dt As Object, utcTime As Date, fileTime As Date
+    
+    Set dt = CreateObject("WbemScripting.SWbemDateTime")
+    dt.SetVarDate Now
+    utcTime = dt.GetVarDate(False)
+    
+    fileTime = DateAdd("d", CDbl(Mid(fileName, 7, 3)) - 1, Mid(fileName, 1, 4) & "/1/1")
+    fileTime = DateAdd("h", CDbl(Mid(fileName, 10, 2)), fileTime)
+    fileTime = DateAdd("n", CDbl(Mid(fileName, 12, 2)), fileTime)
+    
+    isBetween = DateAdd("h", hoursBack * -1, utcTime) < fileTime
+    
+End Function
+
+Sub DeleteFile(fileName As String)
+    Dim fso As FileSystemObject
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    On Error Resume Next
+    
+    fso.DeleteFile fileName, True
+    
+    Set fso = Nothing
+    
+End Sub
