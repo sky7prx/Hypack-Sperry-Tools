@@ -8,6 +8,7 @@
 *.usr
 *.user
 *.suo
+.*
 
 # Ignore exported form binary files
 *.frx

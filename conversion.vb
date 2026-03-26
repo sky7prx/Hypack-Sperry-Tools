@@ -994,7 +994,10 @@ Function ReadRawFiles()
     ' Loop through each file in the folder
     For Each file In folder.files
         ' Perform actions with each file, e.g., print its name
-        If file.name Like "####*.RAW" Then
+        ' Match any file with a .raw extension (case-insensitive). This avoids skipping
+        ' filenames that contain spaces or other characters that the previous Like
+        ' pattern didn't capture.
+        If LCase(Right(file.Name, 4)) = ".raw" Then
             If isBetween(file.Path, hoursBack) Then
                 count = count + 1
                 ReDim Preserve fileNames(1 To count)
