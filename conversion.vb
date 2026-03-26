@@ -995,7 +995,7 @@ Function ReadRawFiles()
     For Each file In folder.files
         ' Perform actions with each file, e.g., print its name
         If file.name Like "####*.RAW" Then
-            If isBetween(file.name, hoursBack) Then
+            If isBetween(file.Path, hoursBack) Then
                 count = count + 1
                 ReDim Preserve fileNames(1 To count)
                 fileNames(count) = file.name
@@ -1072,19 +1072,43 @@ Debug.Print "Execution finished"
     Set fso = Nothing
 End Function
 
-Function isBetween(fileName As String, hoursBack As Double) As Boolean
-    Dim dt As Object, utcTime As Date, fileTime As Date
-    
-    Set dt = CreateObject("WbemScripting.SWbemDateTime")
-    dt.SetVarDate Now
-    utcTime = dt.GetVarDate(False)
-    
-    fileTime = DateAdd("d", CDbl(Mid(fileName, 7, 3)) - 1, Mid(fileName, 1, 4) & "/1/1")
-    fileTime = DateAdd("h", CDbl(Mid(fileName, 10, 2)), fileTime)
-    fileTime = DateAdd("n", CDbl(Mid(fileName, 12, 2)), fileTime)
-    
-    isBetween = DateAdd("h", hoursBack * -1, utcTime) < fileTime
-    
+Function isBetween(filePath As String, hoursBack As Double) As Boolean
+    Dim fso As Object, ts As Object, line As String
+    Dim parts As Variant, fileTime As Date
+    Dim dt As Object, utcTime As Date
+
+    On Error GoTo Cleanup
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If Not fso.FileExists(filePath) Then GoTo Cleanup
+
+    Set ts = fso.OpenTextFile(filePath, 1)
+    Do While Not ts.AtEndOfStream
+        line = Trim(ts.ReadLine)
+        If Len(line) >= 3 And UCase(Left(line, 3)) = "TND" Then
+            parts = Split(line)
+            If UBound(parts) >= 2 Then
+                ' Expect parts: TND time date ... e.g. TND 04:29:58 03/26/2026 0
+                On Error GoTo Cleanup
+                fileTime = CDate(parts(2) & " " & parts(1))
+                Set dt = CreateObject("WbemScripting.SWbemDateTime")
+                dt.SetVarDate Now
+                utcTime = dt.GetVarDate(False)
+                isBetween = DateAdd("h", hoursBack * -1, utcTime) < fileTime
+                ts.Close
+                Set fso = Nothing
+                Exit Function
+            End If
+        End If
+    Loop
+    ts.Close
+
+Cleanup:
+    isBetween = False
+    On Error Resume Next
+    If Not ts Is Nothing Then ts.Close
+    Set ts = Nothing
+    Set fso = Nothing
 End Function
 
 Sub DeleteFile(fileName As String)
