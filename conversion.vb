@@ -1075,12 +1075,16 @@ End Function
 Function isBetween(filePath As String, hoursBack As Double) As Boolean
     Dim fso As Object, ts As Object, line As String
     Dim parts As Variant, fileTime As Date
-    Dim dt As Object, utcTime As Date
+    Dim dt As Object, dtFile As Object
+    Dim utcNow As Date, fileTimeUtc As Date, threshold As Date
+    Dim fname As String
 
     On Error GoTo Cleanup
 
     Set fso = CreateObject("Scripting.FileSystemObject")
     If Not fso.FileExists(filePath) Then GoTo Cleanup
+
+    fname = fso.GetFileName(filePath)
 
     Set ts = fso.OpenTextFile(filePath, 1)
     Do While Not ts.AtEndOfStream
@@ -1090,11 +1094,28 @@ Function isBetween(filePath As String, hoursBack As Double) As Boolean
             If UBound(parts) >= 2 Then
                 ' Expect parts: TND time date ... e.g. TND 04:29:58 03/26/2026 0
                 On Error GoTo Cleanup
-                fileTime = CDate(parts(2) & " " & parts(1))
+                fileTime = CDate(parts(2) & " " & parts(1)) ' parsed by CDate (local interpretation)
+
+                ' Get current UTC time
                 Set dt = CreateObject("WbemScripting.SWbemDateTime")
                 dt.SetVarDate Now
-                utcTime = dt.GetVarDate(False)
-                isBetween = DateAdd("h", hoursBack * -1, utcTime) < fileTime
+                utcNow = dt.GetVarDate(False)
+
+                ' Convert the parsed file time (which CDate interpreted as local) into UTC
+                Set dtFile = CreateObject("WbemScripting.SWbemDateTime")
+                dtFile.SetVarDate fileTime
+                fileTimeUtc = dtFile.GetVarDate(False)
+
+                ' Compare file time (UTC) to threshold (utcNow - hoursBack)
+                threshold = DateAdd("h", -hoursBack, utcNow)
+                If fileTimeUtc >= threshold Then
+                    isBetween = True
+                    Debug.Print fname & ": match"
+                Else
+                    isBetween = False
+                    Debug.Print fname & ": no match"
+                End If
+
                 ts.Close
                 Set fso = Nothing
                 Exit Function
@@ -1106,6 +1127,9 @@ Function isBetween(filePath As String, hoursBack As Double) As Boolean
 Cleanup:
     isBetween = False
     On Error Resume Next
+    If Not fso Is Nothing Then
+        If fso.FileExists(filePath) Then Debug.Print fso.GetFileName(filePath) & ": no match"
+    End If
     If Not ts Is Nothing Then ts.Close
     Set ts = Nothing
     Set fso = Nothing

@@ -1,0 +1,19 @@
+# Ignore temporary Excel/Office files
+~$*
+*~$*
+*.tmp
+*.temp
+
+# Ignore user-specific setting files
+*.usr
+*.user
+*.suo
+
+# Ignore exported form binary files
+*.frx
+
+# Ignore Hypack files
+*.rtz
+*.lnm
+Raw/*
+Output/*
