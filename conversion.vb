@@ -997,8 +997,8 @@ Function ReadRawFiles()
         ' Match any file with a .raw extension (case-insensitive). This avoids skipping
         ' filenames that contain spaces or other characters that the previous Like
         ' pattern didn't capture.
-        If LCase(Right(file.Name, 4)) = ".raw" Then
-            If isBetween(file.Path, hoursBack) Then
+        If LCase(Right(file.name, 4)) = ".raw" Then
+            If isBetween(file.path, hoursBack) Then
                 count = count + 1
                 ReDim Preserve fileNames(1 To count)
                 fileNames(count) = file.name
@@ -1012,7 +1012,7 @@ Function ReadRawFiles()
     End If
     
     ReDim textFiles(1 To UBound(fileNames))
-    Dim keepSearching As Boolean, startWriting As Boolean
+    Dim keepSearching As Boolean, startWriting As Boolean, parts As Variant, fileTime As Date, timeStr As String
     Dim i As Integer
     For i = LBound(fileNames) To UBound(fileNames)
         
@@ -1032,10 +1032,20 @@ Function ReadRawFiles()
                 If textLine Like "INI CentralMeridian=*" Then
                     centMer = CInt(ExtractNumbers(Mid(textLine, Len("INI CentralMeridian="), 4)))
                 End If
+                If textLine Like "TND*" Then
+                    parts = Split(textLine)
+                    If UBound(parts) >= 2 Then
+                        fileTime = CDate(parts(2) & " " & parts(1))
+                        timeStr = Format(fileTime, "HH:nn yyyy-mm-dd")
+                        timeStr = Replace(timeStr, ":", ".")
+                    End If
+                End If
                 If textLine Like "LIN #*" Then startWriting = True
                 If startWriting Then
                     If textLine Like "LBP*" Then
                         ' Do Nothing
+                    ElseIf textLine Like "LNN*" Then
+                        text = text & textLine & " " & timeStr & vbCrLf
                     Else
                         text = text & textLine & vbCrLf
                         count = count + 1
@@ -1161,7 +1171,7 @@ End Function
 
 Function isBetween(filePath As String, hoursBack As Double) As Boolean
     Dim fso As Object, ts As Object, line As String
-    Dim parts As Variant, fileTime As Date
+    Dim parts As Variant, fileTime As Date, timeStr As String
     Dim dt As Object, dtFile As Object
     Dim utcNow As Date, fileTimeUtc As Date, threshold As Date
     Dim fname As String
@@ -1182,6 +1192,7 @@ Function isBetween(filePath As String, hoursBack As Double) As Boolean
                 ' Expect parts: TND time date ... e.g. TND 04:29:58 03/26/2026 0
                 On Error GoTo Cleanup
                 fileTime = CDate(parts(2) & " " & parts(1)) ' parsed by CDate (local interpretation)
+                timeStr = Format(fileTime, "hh:nn yyyy-mm-dd")
 
                 ' Get current UTC time
                 Set dt = CreateObject("WbemScripting.SWbemDateTime")
