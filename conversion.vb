@@ -1043,6 +1043,38 @@ Function ReadRawFiles()
                 End If
                 If textLine Like "EOL*" Then keepSearching = False
             Loop
+
+            ' Read the last line of the file and output it to a variable.
+            Dim lastLine As String
+            lastLine = GetLastLineFast(folderPath & fileNames(i))
+
+            ' If the file ends with FIX, reverse only PTS lines in the captured text.
+            If UCase$(Left$(Trim$(lastLine), 3)) <> "FIX" Then
+                Dim textLines() As String, ptsLines() As String
+                Dim lineIdx As Long, ptsCount As Long, replaceIdx As Long
+
+                textLines = Split(text, vbCrLf)
+                ptsCount = 0
+
+                For lineIdx = LBound(textLines) To UBound(textLines)
+                    If UCase$(Left$(Trim$(textLines(lineIdx)), 3)) = "PTS" Then
+                        ptsCount = ptsCount + 1
+                        ReDim Preserve ptsLines(1 To ptsCount)
+                        ptsLines(ptsCount) = textLines(lineIdx)
+                    End If
+                Next lineIdx
+
+                If ptsCount > 1 Then
+                    replaceIdx = ptsCount
+                    For lineIdx = LBound(textLines) To UBound(textLines)
+                        If UCase$(Left$(Trim$(textLines(lineIdx)), 3)) = "PTS" Then
+                            textLines(lineIdx) = ptsLines(replaceIdx)
+                            replaceIdx = replaceIdx - 1
+                        End If
+                    Next lineIdx
+                    text = Join(textLines, vbCrLf)
+                End If
+            End If
         f.Close
         textFiles(i) = text
     Next i
@@ -1073,6 +1105,58 @@ Debug.Print "Execution finished"
     Set file = Nothing
     Set folder = Nothing
     Set fso = Nothing
+End Function
+
+Private Function GetLastLineFast(filePath As String) As String
+    Dim fileNum As Integer
+    Dim fileLen As Long, pos As Long, endPos As Long, lineStart As Long
+    Dim lineLen As Long
+    Dim ch As String * 1
+    Dim result As String
+
+    On Error GoTo Cleanup
+
+    fileNum = FreeFile
+    Open filePath For Binary Access Read As #fileNum
+
+    fileLen = LOF(fileNum)
+    If fileLen <= 0 Then GoTo Cleanup
+
+    pos = fileLen
+
+    ' Skip trailing CR/LF so we get the last content line even if file ends with a newline.
+    Do While pos > 0
+        Get #fileNum, pos, ch
+        If ch = vbCr Or ch = vbLf Then
+            pos = pos - 1
+        Else
+            Exit Do
+        End If
+    Loop
+
+    If pos <= 0 Then GoTo Cleanup
+
+    endPos = pos
+
+    ' Find the previous line break scanning backward.
+    Do While pos > 0
+        Get #fileNum, pos, ch
+        If ch = vbCr Or ch = vbLf Then Exit Do
+        pos = pos - 1
+    Loop
+
+    lineStart = pos + 1
+    lineLen = endPos - lineStart + 1
+
+    If lineLen > 0 Then
+        result = Space$(lineLen)
+        Get #fileNum, lineStart, result
+    End If
+
+Cleanup:
+    On Error Resume Next
+    If fileNum > 0 Then Close #fileNum
+    GetLastLineFast = result
 End Function
 
 Function isBetween(filePath As String, hoursBack As Double) As Boolean
