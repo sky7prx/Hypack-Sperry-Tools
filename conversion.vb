@@ -1042,7 +1042,7 @@ Function ReadRawFiles()
                     parts = Split(textLine)
                     If UBound(parts) >= 2 Then
                         fileTime = CDate(parts(2) & " " & parts(1))
-                        timeStr = Format(fileTime, "HH:nn yyyy-mm-dd")
+                        timeStr = Format(fileTime, "HH:nn mm-dd")
                         timeStr = Replace(timeStr, ":", ".")
                     End If
                 End If
@@ -1278,7 +1278,7 @@ Function isBetween(filePath As String, hoursBack As Double) As Boolean
                 ' Expect parts: TND time date ... e.g. TND 04:29:58 03/26/2026 0
                 On Error GoTo Cleanup
                 fileTime = CDate(parts(2) & " " & parts(1)) ' parsed by CDate (local interpretation)
-                timeStr = Format(fileTime, "hh:nn yyyy-mm-dd")
+                timeStr = Format(fileTime, "HH:nn yyyy-mm-dd")
 
                 ' Get current UTC time
                 Set dt = CreateObject("WbemScripting.SWbemDateTime")
