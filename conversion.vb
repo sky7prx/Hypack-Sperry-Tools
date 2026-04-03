@@ -972,6 +972,12 @@ Function ReadRawFiles()
     folderPath = CStr(Range("F2").Value)
     outputPath = CStr(Range("F3").Value)
     hoursBack = CDbl(Range("F4").Value)
+    ' Read optional extension distances (meters) for start/end of track
+    Dim extendStartMeters As Double, extendEndMeters As Double
+    extendStartMeters = 0
+    extendEndMeters = 0
+    If IsNumeric(Range("C9").Value) Then extendStartMeters = CDbl(Range("C9").Value)
+    If IsNumeric(Range("C10").Value) Then extendEndMeters = CDbl(Range("C10").Value)
     
     ' Check formatting of the path
     If Right(folderPath, 1) <> "\" Then
@@ -1084,9 +1090,89 @@ Function ReadRawFiles()
                     Next lineIdx
                     text = Join(textLines, vbCrLf)
                 End If
+                    End If
+            f.Close
+
+            ' Optionally extend start/end by adding extra UTM PTS lines (cells C9 and C10)
+            If (extendStartMeters > 0) Or (extendEndMeters > 0) Then
+                Dim linesArr() As String, lidx As Long
+                linesArr = Split(text, vbCrLf)
+
+                ' Collect all PTS coordinates present in this text block
+                Dim ptsE() As Double, ptsN() As Double, ptsCountLocal As Long
+                ptsCountLocal = 0
+                For lidx = LBound(linesArr) To UBound(linesArr)
+                    If Len(Trim(linesArr(lidx))) >= 3 Then
+                        If UCase$(Left$(Trim(linesArr(lidx)), 3)) = "PTS" Then
+                            Dim partsLocal As Variant
+                            partsLocal = Split(Trim(linesArr(lidx)))
+                            If UBound(partsLocal) >= 2 Then
+                                ptsCountLocal = ptsCountLocal + 1
+                                ReDim Preserve ptsE(1 To ptsCountLocal)
+                                ReDim Preserve ptsN(1 To ptsCountLocal)
+                                ptsE(ptsCountLocal) = CDbl(partsLocal(1))
+                                ptsN(ptsCountLocal) = CDbl(partsLocal(2))
+                            End If
+                        End If
+                    End If
+                Next lidx
+
+                Dim newStartLine As String, newEndLine As String
+                newStartLine = ""
+                newEndLine = ""
+
+                If ptsCountLocal >= 2 Then
+                    Dim dx As Double, dy As Double, dlen As Double, ux As Double, uy As Double
+                    ' Compute start extension (before first point)
+                    If extendStartMeters > 0 Then
+                        dx = ptsE(2) - ptsE(1)
+                        dy = ptsN(2) - ptsN(1)
+                        dlen = Sqr(dx * dx + dy * dy)
+                        If dlen > 0 Then
+                            ux = dx / dlen: uy = dy / dlen
+                            newStartLine = "PTS " & Format(ptsE(1) - ux * extendStartMeters, "0.000000") & " " & Format(ptsN(1) - uy * extendStartMeters, "0.000000")
+                        End If
+                    End If
+
+                    ' Compute end extension (after last point)
+                    If extendEndMeters > 0 Then
+                        dx = ptsE(ptsCountLocal) - ptsE(ptsCountLocal - 1)
+                        dy = ptsN(ptsCountLocal) - ptsN(ptsCountLocal - 1)
+                        dlen = Sqr(dx * dx + dy * dy)
+                        If dlen > 0 Then
+                            ux = dx / dlen: uy = dy / dlen
+                            newEndLine = "PTS " & Format(ptsE(ptsCountLocal) + ux * extendEndMeters, "0.000000") & " " & Format(ptsN(ptsCountLocal) + uy * extendEndMeters, "0.000000")
+                        End If
+                    End If
+                End If
+
+                ' If we have new lines to insert, rebuild the text inserting at the first and/or last PTS positions
+                If newStartLine <> "" Or newEndLine <> "" Then
+                    Dim newText As String
+                    newText = ""
+                    Dim firstPIdx As Long, lastPIdx As Long
+                    firstPIdx = -1: lastPIdx = -1
+                    For lidx = LBound(linesArr) To UBound(linesArr)
+                        If Len(Trim(linesArr(lidx))) >= 3 And UCase$(Left$(Trim(linesArr(lidx)), 3)) = "PTS" Then
+                            If firstPIdx = -1 Then firstPIdx = lidx
+                            lastPIdx = lidx
+                        End If
+                    Next lidx
+
+                    For lidx = LBound(linesArr) To UBound(linesArr)
+                        If lidx = firstPIdx And newStartLine <> "" Then
+                            newText = newText & newStartLine & vbCrLf
+                        End If
+                        newText = newText & linesArr(lidx) & vbCrLf
+                        If lidx = lastPIdx And newEndLine <> "" Then
+                            newText = newText & newEndLine & vbCrLf
+                        End If
+                    Next lidx
+                    text = newText
+                End If
             End If
-        f.Close
-        textFiles(i) = text
+
+            textFiles(i) = text
     Next i
     
     If Range("C8").Value = "Yes" Then
