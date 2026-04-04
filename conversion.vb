@@ -302,34 +302,45 @@ NextRowIteration1:
         outfileNameRev = path & routeDetails(r, 1) & " LAZ " & lazRevStr & ".rtz"
         
         'Open the output file and the reverse output file, if requested
-        Open outfileName For Output As #1
-        If reverse Then Open outfileNameRev For Output As #2
+        Dim fileNum1 As Integer, fileNum2 As Integer
         
-        'Print the XML header
-        Print #1, "<?xml version=""1.0"" encoding=""utf-8""?>"
-        Print #1, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
+        fileNum1 = FreeFile()
+        If IsFileOpen(outfileName) Then outfileName = outfileName & ".rtz"
+        
+        Open outfileName For Output As #fileNum1
+        
+        fileNum2 = FreeFile()
         
         If reverse Then
-            Print #2, "<?xml version=""1.0"" encoding=""utf-8""?>"
-            Print #2, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
+            If IsFileOpen(outfileNameRev) Then outfileNameRev = outfileNameRev & ".rtz"
+            Open outfileNameRev For Output As #fileNum2
+        End If
+        
+        'Print the XML header
+        Print #fileNum1, "<?xml version=""1.0"" encoding=""utf-8""?>"
+        Print #fileNum1, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
+        
+        If reverse Then
+            Print #fileNum2, "<?xml version=""1.0"" encoding=""utf-8""?>"
+            Print #fileNum2, "<route version=""1.0"" xmlns=""http://www.cirm.org/RTZ/1/0"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:schemaLocation=""http://www.cirm.org/RTZ/1/0/rtz.xsd"">"
         End If
   
         'Print the Route Name
-        Print #1, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazBaseStr & """ />"
+        Print #fileNum1, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazBaseStr & """ />"
         
-        If reverse Then Print #2, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazRevStr & """ />"
+        If reverse Then Print #fileNum2, vbTab & "<routeInfo routeName=""" & routeDetails(r, 1) & " LAZ " & lazRevStr & """ />"
             
         'Print the section header and the default waypoint info
-        Print #1, vbTab & "<waypoints>"
-        Print #1, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
-        Print #1, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
-        Print #1, vbTab & vbTab & "</defaultWaypoint>"
+        Print #fileNum1, vbTab & "<waypoints>"
+        Print #fileNum1, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
+        Print #fileNum1, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
+        Print #fileNum1, vbTab & vbTab & "</defaultWaypoint>"
         
         If reverse Then
-            Print #2, vbTab & "<waypoints>"
-            Print #2, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
-            Print #2, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
-            Print #2, vbTab & vbTab & "</defaultWaypoint>"
+            Print #fileNum2, vbTab & "<waypoints>"
+            Print #fileNum2, vbTab & vbTab & "<defaultWaypoint radius=""1"">"
+            Print #fileNum2, vbTab & vbTab & vbTab & "<leg starboardXTD=""0.0539956803455724"" portsideXTD=""0.0539956803455724"" geometryType=""Loxodrome"" speedMin=""6"" speedMax=""13"" />"
+            Print #fileNum2, vbTab & vbTab & "</defaultWaypoint>"
         End If
             
         Dim colLat As Double, colLon As Double, wptNum As Integer
@@ -343,7 +354,7 @@ NextRowIteration1:
             ElseIf C Mod 2 = 1 Then
                 If routeDetails(r, C) = "" Then GoTo NextColIteration
                 colLon = routeDetails(r, C)
-                PrintWaypoint wptNum, "WPT " & wptNum, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), True
+                PrintWaypoint wptNum, "WPT " & wptNum, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), fileNum1
                 wptNum = wptNum + 1
             End If
             
@@ -370,7 +381,7 @@ NextColIteration:
                         wptNm = Left(routeDetails(1, C), Len(routeDetails(1, C)) - 4)
                     End If
                     
-                    PrintWaypoint wptNum, wptNm, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), False
+                    PrintWaypoint wptNum, wptNm, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), fileNum2
                     wptNum = wptNum + 1
                 ElseIf C Mod 2 = 1 Then
                     If routeDetails(r, C) = "" Then GoTo NextColRevIteration
@@ -382,70 +393,70 @@ NextColRevIteration:
         End If
         
         'Close the XML section
-        Print #1, vbTab & "</waypoints>"
+        Print #fileNum1, vbTab & "</waypoints>"
         
-        If reverse Then Print #2, vbTab & "</waypoints>"
+        If reverse Then Print #fileNum2, vbTab & "</waypoints>"
         
         'Print the Schedule section
         Dim mytab As String
         mytab = vbTab & vbTab  'Double tab
-        Print #1, vbTab & "<schedules>"
-        Print #1, mytab & "<schedule id=""1"" name=""Default Schedule"">"
-        Print #1, mytab & vbTab & "<manual>"
+        Print #fileNum1, vbTab & "<schedules>"
+        Print #fileNum1, mytab & "<schedule id=""1"" name=""Default Schedule"">"
+        Print #fileNum1, mytab & vbTab & "<manual>"
         
         If reverse Then
-            Print #2, vbTab & "<schedules>"
-            Print #2, mytab & "<schedule id=""1"" name=""Default Schedule"">"
-            Print #2, mytab & vbTab & "<manual>"
+            Print #fileNum2, vbTab & "<schedules>"
+            Print #fileNum2, mytab & "<schedule id=""1"" name=""Default Schedule"">"
+            Print #fileNum2, mytab & vbTab & "<manual>"
         End If
         
         Dim s As Integer
         For s = 1 To wptNum - 1
             If s = 1 Then
-                Print #1, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
-                If reverse Then Print #2, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
+                Print #fileNum1, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
+                If reverse Then Print #fileNum2, mytab & mytab & "<sheduleElement waypointId=""1"" etd=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"" />"
             Else
-                Print #1, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
-                If reverse Then Print #2, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
+                Print #fileNum1, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
+                If reverse Then Print #fileNum2, mytab & mytab & "<sheduleElement waypointId=""" & s & """ speed=""" & speed & """ />"
             End If
         Next s
         
           'Close out the section in the XML
-        Print #1, mytab & vbTab & "</manual>"
-        Print #1, mytab & "</schedule>"
-        Print #1, vbTab & "</schedules>"
+        Print #fileNum1, mytab & vbTab & "</manual>"
+        Print #fileNum1, mytab & "</schedule>"
+        Print #fileNum1, vbTab & "</schedules>"
         
         If reverse Then
-            Print #2, mytab & vbTab & "</manual>"
-            Print #2, mytab & "</schedule>"
-            Print #2, vbTab & "</schedules>"
+            Print #fileNum2, mytab & vbTab & "</manual>"
+            Print #fileNum2, mytab & "</schedule>"
+            Print #fileNum2, vbTab & "</schedules>"
         End If
         
         'Print the Last part of the file including the Description of the Route
-        Print #1, vbTab & "<extensions>"
-        Print #1, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
-        Print #1, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
-        Print #1, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazBaseStr & "</Description>"
-        Print #1, mytab & mytab & "<Notes />"
-        Print #1, mytab & vbTab & "</AdditionalRouteData>"
-        Print #1, mytab & "</extension>"
-        Print #1, vbTab & "</extensions>"
-        Print #1, "</route>"
+        Print #fileNum1, vbTab & "<extensions>"
+        Print #fileNum1, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
+        Print #fileNum1, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
+        Print #fileNum1, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazBaseStr & "</Description>"
+        Print #fileNum1, mytab & mytab & "<Notes />"
+        Print #fileNum1, mytab & vbTab & "</AdditionalRouteData>"
+        Print #fileNum1, mytab & "</extension>"
+        Print #fileNum1, vbTab & "</extensions>"
+        Print #fileNum1, "</route>"
         
-        Close #1
+        Close #fileNum1
         
         If reverse Then
-            Print #2, vbTab & "<extensions>"
-            Print #2, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
-            Print #2, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
-            Print #2, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazRevStr & "</Description>"
-            Print #2, mytab & mytab & "<Notes />"
-            Print #2, mytab & vbTab & "</AdditionalRouteData>"
-            Print #2, mytab & "</extension>"
-            Print #2, vbTab & "</extensions>"
-            Print #2, "</route>"
+            Print #fileNum2, vbTab & "<extensions>"
+            Print #fileNum2, mytab & "<extension manufacturer=""Sperry"" name=""AdditionalRouteData"">"
+            Print #fileNum2, mytab & vbTab & "<AdditionalRouteData LastModified=""" & Format(Now, "YYYY-MM-DD") & "T" & Format(Now, "hh:mm:ss") & ".0000000+00:00"">"
+            Print #fileNum2, mytab & mytab & "<Description>" & routeDetails(r, 1) & " LAZ " & lazRevStr & "</Description>"
+            Print #fileNum2, mytab & mytab & "<Notes />"
+            Print #fileNum2, mytab & vbTab & "</AdditionalRouteData>"
+            Print #fileNum2, mytab & "</extension>"
+            Print #fileNum2, vbTab & "</extensions>"
+            Print #fileNum2, "</route>"
         
-            Close #2
+            Close #fileNum2
         End If
         
 NextRowIteration2:
@@ -463,6 +474,16 @@ NextRowIteration2:
 EndEarly:
     
 End Sub
+
+Function IsFileOpen(fileName As String) As Boolean
+    On Error Resume Next
+    Dim ff As Long
+    ff = FreeFile
+    Open fileName For Binary Access Read Write Lock Read Write As #ff
+    Close #ff
+    If Err.Number <> 0 Then IsFileOpen = True
+    On Error GoTo 0
+End Function
 
 Private Function CheckName(nm) As String
    'need to do a regex replace for double quotes
@@ -487,7 +508,7 @@ Private Function MetersToNM(meters)
 End Function
 
 'Prints each waypoint
-Private Sub PrintWaypoint(waypointID, waypointName, lat, lon, speed, xtd, radius, firstFile)
+Private Sub PrintWaypoint(waypointID, waypointName, lat, lon, speed, xtd, radius, FileNum As Integer)
   Dim mytab As String, strName As String
   mytab = vbTab & vbTab 'double tab
   'strName = CheckName(waypointName)
@@ -502,35 +523,19 @@ Private Sub PrintWaypoint(waypointID, waypointName, lat, lon, speed, xtd, radius
   
   'If it's the first waypoint, there's no turn so no radius
   If waypointID = 1 Then
-    If firstFile Then
-        Print #1, mytab & "<waypoint id=""1"" name=""" & strName & """>"
-    Else
-        Print #2, mytab & "<waypoint id=""1"" name=""" & strName & """>"
-    End If
+    Print #FileNum, mytab & "<waypoint id=""1"" name=""" & strName & """>"
   Else
-    If firstFile Then
-        Print #1, mytab & "<waypoint id=""" & waypointID & """ name=""" & strName & """ radius=""" & radius & """>"
-    Else
-        Print #2, mytab & "<waypoint id=""" & waypointID & """ name=""" & strName & """ radius=""" & radius & """>"
-    End If
+    Print #FileNum, mytab & "<waypoint id=""" & waypointID & """ name=""" & strName & """ radius=""" & radius & """>"
   End If
   
   'Print the position
-  If firstFile Then
-    Print #1, mytab & vbTab & "<position lat=""" & lat & """ lon=""" & lon & """ />"
-  Else
-    Print #2, mytab & vbTab & "<position lat=""" & lat & """ lon=""" & lon & """ />"
-  End If
+  Print #FileNum, mytab & vbTab & "<position lat=""" & lat & """ lon=""" & lon & """ />"
   
   'Print XTD in NM
   Dim xtdNM As String
   If waypointID > 1 Then
     xtdNM = MetersToNM(xtd)
-    If firstFile Then
-        Print #1, mytab & vbTab & "<leg starboardXTD=""" & xtdNM & """ portsideXTD=""" & xtdNM & """ />"
-    Else
-        Print #2, mytab & vbTab & "<leg starboardXTD=""" & xtdNM & """ portsideXTD=""" & xtdNM & """ />"
-    End If
+    Print #FileNum, mytab & vbTab & "<leg starboardXTD=""" & xtdNM & """ portsideXTD=""" & xtdNM & """ />"
   End If
   
   'Determine the turn speeds based on the speed
@@ -540,32 +545,17 @@ Private Sub PrintWaypoint(waypointID, waypointName, lat, lon, speed, xtd, radius
   maxSpeed = Format(0.514444444444441 * (speed + 2), "0.000000000000000")
   
   'Print the turn info
-  If firstFile Then
-    Print #1, mytab & vbTab & "<extensions>"
-    Print #1, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalWaypointData"">"
-    Print #1, mytab & mytab & vbTab & "<AdditionalWaypointData TurnSpeed=""" & turnSpeed & """ MinTurnSpeed=""" & minSpeed & """ MaxTurnSpeed=""" & maxSpeed & """ LeftOffTrackAlarmLimitForTurn=""" & xtd & """ RightOffTrackAlarmLimitForTurn=""" & xtd & """ />"
-    Print #1, mytab & mytab & "</extension>"
-    Print #1, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalTrackData"">"
-    Print #1, mytab & mytab & vbTab & "<AdditionalTrackData OffTrackAlarmEnabledForTurn=""true"" OffTrackAlarmEnabledForDepartingLeg=""true"" />"
-    Print #1, mytab & mytab & "</extension>"
-    Print #1, mytab & vbTab & "</extensions>"
-  Else
-    Print #2, mytab & vbTab & "<extensions>"
-    Print #2, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalWaypointData"">"
-    Print #2, mytab & mytab & vbTab & "<AdditionalWaypointData TurnSpeed=""" & turnSpeed & """ MinTurnSpeed=""" & minSpeed & """ MaxTurnSpeed=""" & maxSpeed & """ LeftOffTrackAlarmLimitForTurn=""" & xtd & """ RightOffTrackAlarmLimitForTurn=""" & xtd & """ />"
-    Print #2, mytab & mytab & "</extension>"
-    Print #2, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalTrackData"">"
-    Print #2, mytab & mytab & vbTab & "<AdditionalTrackData OffTrackAlarmEnabledForTurn=""true"" OffTrackAlarmEnabledForDepartingLeg=""true"" />"
-    Print #2, mytab & mytab & "</extension>"
-    Print #2, mytab & vbTab & "</extensions>"
-  End If
+  Print #FileNum, mytab & vbTab & "<extensions>"
+  Print #FileNum, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalWaypointData"">"
+  Print #FileNum, mytab & mytab & vbTab & "<AdditionalWaypointData TurnSpeed=""" & turnSpeed & """ MinTurnSpeed=""" & minSpeed & """ MaxTurnSpeed=""" & maxSpeed & """ LeftOffTrackAlarmLimitForTurn=""" & xtd & """ RightOffTrackAlarmLimitForTurn=""" & xtd & """ />"
+  Print #FileNum, mytab & mytab & "</extension>"
+  Print #FileNum, mytab & mytab & "<extension manufacturer=""Sperry"" name=""AdditionalTrackData"">"
+  Print #FileNum, mytab & mytab & vbTab & "<AdditionalTrackData OffTrackAlarmEnabledForTurn=""true"" OffTrackAlarmEnabledForDepartingLeg=""true"" />"
+  Print #FileNum, mytab & mytab & "</extension>"
+  Print #FileNum, mytab & vbTab & "</extensions>"
   
   'Close out the waypoint
-  If firstFile Then
-    Print #1, mytab & "</waypoint>"
-  Else
-    Print #2, mytab & "</waypoint>"
-  End If
+  Print #FileNum, mytab & "</waypoint>"
 End Sub
 
 'Used to calculate the radius which will set the rate of turn at 100 degrees per minute
@@ -976,8 +966,8 @@ Function ReadRawFiles()
     Dim extendStartMeters As Double, extendEndMeters As Double
     extendStartMeters = 0
     extendEndMeters = 0
-    If IsNumeric(Range("C9").Value) Then extendStartMeters = CDbl(Range("C9").Value)
-    If IsNumeric(Range("C10").Value) Then extendEndMeters = CDbl(Range("C10").Value)
+    If IsNumeric(Range("C10").Value) Then extendStartMeters = CDbl(Range("C10").Value) ' Reverse input order (C9/C10) to account for reversed route
+    If IsNumeric(Range("C9").Value) Then extendEndMeters = CDbl(Range("C9").Value)
     
     ' Check formatting of the path
     If Right(folderPath, 1) <> "\" Then
@@ -1065,7 +1055,7 @@ Function ReadRawFiles()
             lastLine = GetLastLineFast(folderPath & fileNames(i))
 
             ' If the file ends with FIX, reverse only PTS lines in the captured text.
-            If True = False Then ' Disabled reversing of PTS lines for crashed files
+            If True Then ' Disabled reversing of PTS lines for crashed files
             ' If UCase$(Left$(Trim$(lastLine), 3)) <> "FIX" Then
                 Dim textLines() As String, ptsLines() As String
                 Dim lineIdx As Long, ptsCount As Long, replaceIdx As Long
@@ -1101,49 +1091,64 @@ Function ReadRawFiles()
             If (extendStartMeters > 0) Then
                 ' Extract first two PTS points
                 Dim pt1 As Point, pt2 As Point, strPos1 As Integer, strPos2 As Integer
+                
                 strPos1 = InStr(1, text, "PTS ", vbTextCompare)
                 strPos2 = InStr(strPos1 + 4, text, " ", vbTextCompare)
                 pt1.X = Mid(text, strPos1 + 4, strPos2 - (strPos1 + 4))
+                
                 strPos1 = strPos2
-                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
+                strPos2 = InStr(strPos1 + 1, text, vbCrLf, vbTextCompare)
                 pt1.Y = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
+                
+                strPos1 = InStr(strPos2, text, "PTS ", vbTextCompare)
+                strPos2 = InStr(strPos1 + 4, text, " ", vbTextCompare)
+                pt2.X = Mid(text, strPos1 + 4, strPos2 - (strPos1 + 4))
+                
                 strPos1 = strPos2
-                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
-                pt2.X = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
-                strPos1 = strPos2
-                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
+                strPos2 = InStr(strPos1 + 4, text, vbCrLf, vbTextCompare)
                 pt2.Y = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
 
                 Dim laz As Double, dx As Double, dy As Double
+                
                 laz = Sqr((pt2.X - pt1.X) ^ 2 + (pt2.Y - pt1.Y) ^ 2)
-                dx = (pt2.X - pt1.X) / laz
-                dy = (pt2.Y - pt1.Y) / laz
+                dx = (pt1.X - pt2.X) / laz
+                dy = (pt1.Y - pt2.Y) / laz
+                
+                Debug.Print ("Start ext length: " & (Sqr((dx * extendStartMeters) ^ 2 + (dy * extendStartMeters) ^ 2)))
 
                 pt1Str = "PTS " & Format(dx * extendStartMeters + pt1.X, "0.00") & " " & Format(dy * extendStartMeters + pt1.Y, "0.00")
             End If
 
             If (extendEndMeters > 0) Then
                 ' Extract last two PTS points
-                Dim ptN1 As Point, ptN2 As Point, strPosN1 As Integer, strPosN2 As Integer
-                strPosN2 = InStrRev(text, "PTS ", -1, vbTextCompare)
-                strPosN1 = InStrRev(text, "PTS ", strPosN2 - 1, vbTextCompare)
+                Dim ptN1 As Point, ptN2 As Point, strPosN1 As Integer, strPosN2 As Integer, lastPtPos As Integer
+                
+                strPosN1 = InStrRev(text, "PTS ", -1, vbTextCompare) ' InStrRev(text, "PTS ", -1, vbTextCompare)
+                lastPtPos = strPosN1
+                strPosN2 = InStr(strPosN1 + 4, text, " ", vbTextCompare)
                 ptN1.X = Mid(text, strPosN1 + 4, strPosN2 - (strPosN1 + 4))
+                
                 strPosN1 = strPosN2
-                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
+                strPosN2 = InStr(strPosN1 + 1, text, vbCrLf, vbTextCompare)
                 ptN1.Y = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
+                
+                strPosN1 = InStrRev(text, "PTS ", lastPtPos - 1, vbTextCompare)
+                strPosN2 = InStr(strPosN1 + 4, text, " ", vbTextCompare)
+                ptN2.X = Mid(text, strPosN1 + 4, strPosN2 - (strPosN1 + 4))
+                
                 strPosN1 = strPosN2
-                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
-                ptN2.X = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
-                strPosN1 = strPosN2
-                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
+                strPosN2 = InStr(strPosN1 + 1, text, vbCrLf, vbTextCompare)
                 ptN2.Y = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
 
                 Dim lazN As Double, dxN As Double, dyN As Double
-                lazN = Sqr((ptN2.X - ptN1.X) ^ 2 + (ptN2.Y - ptN1.Y) ^ 2)
-                dxN = (ptN2.X - ptN1.X) / lazN
-                dyN = (ptN2.Y - ptN1.Y) / lazN
+                
+                lazN = Sqr((ptN1.X - ptN2.X) ^ 2 + (ptN1.Y - ptN2.Y) ^ 2)
+                dxN = (ptN1.X - ptN2.X) / lazN
+                dyN = (ptN1.Y - ptN2.Y) / lazN
+                
+                Debug.Print ("End ext length: " & (Sqr((dxN * extendEndMeters) ^ 2 + (dyN * extendEndMeters) ^ 2)))
 
-                ptNStr = "PTS " & Format(dxN * extendEndMeters + ptN2.X, "0.00") & " " & Format(dyN * extendEndMeters + ptN2.Y, "0.00")
+                ptNStr = "PTS " & Format(dxN * extendEndMeters + ptN1.X, "0.00") & " " & Format(dyN * extendEndMeters + ptN1.Y, "0.00")
             End If
 
             If extendStartMeters > 0 Or extendEndMeters > 0 Then
@@ -1203,7 +1208,7 @@ Debug.Print "Execution finished"
 End Function
 
 Private Function GetLastLineFast(filePath As String) As String
-    Dim fileNum As Integer
+    Dim FileNum As Integer
     Dim fileLen As Long, pos As Long, endPos As Long, lineStart As Long
     Dim lineLen As Long
     Dim ch As String * 1
@@ -1211,17 +1216,17 @@ Private Function GetLastLineFast(filePath As String) As String
 
     On Error GoTo Cleanup
 
-    fileNum = FreeFile
-    Open filePath For Binary Access Read As #fileNum
+    FileNum = FreeFile
+    Open filePath For Binary Access Read As #FileNum
 
-    fileLen = LOF(fileNum)
+    fileLen = LOF(FileNum)
     If fileLen <= 0 Then GoTo Cleanup
 
     pos = fileLen
 
     ' Skip trailing CR/LF so we get the last content line even if file ends with a newline.
     Do While pos > 0
-        Get #fileNum, pos, ch
+        Get #FileNum, pos, ch
         If ch = vbCr Or ch = vbLf Then
             pos = pos - 1
         Else
@@ -1235,7 +1240,7 @@ Private Function GetLastLineFast(filePath As String) As String
 
     ' Find the previous line break scanning backward.
     Do While pos > 0
-        Get #fileNum, pos, ch
+        Get #FileNum, pos, ch
         If ch = vbCr Or ch = vbLf Then Exit Do
         pos = pos - 1
     Loop
@@ -1245,12 +1250,12 @@ Private Function GetLastLineFast(filePath As String) As String
 
     If lineLen > 0 Then
         result = Space$(lineLen)
-        Get #fileNum, lineStart, result
+        Get #FileNum, lineStart, result
     End If
 
 Cleanup:
     On Error Resume Next
-    If fileNum > 0 Then Close #fileNum
+    If FileNum > 0 Then Close #FileNum
     GetLastLineFast = result
 End Function
 
