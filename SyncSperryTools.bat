@@ -1,4 +1,5 @@
 @echo off
+
 setlocal
 
 :: --- CONFIGURATION ---
@@ -24,18 +25,18 @@ call git reset --hard origin/main
 echo.
 echo Update complete.
 pause
-endlocal
 
-set /p copyfile="Copy the new file to the desktop? (y/n)"
+set /p "copyfile=Copy the new file to the desktop? (y/n) "
 
-if /I not %copyfile%=="y" goto theend
+if /I not "%copyfile%"=="y" goto theend
 
 setlocal enabledelayedexpansion
 
-set "source=C:\SourceFolder"
 set "dest=%USERPROFILE%\Desktop"
 
-for %%F in ("%REPO_PATH%\Hypack to Sperry Route Converter.xlsm") do (
+echo Copy file to: %dest%
+
+for %%F in ("%REPO_PATH%\Hypack to Sperry Route Converter.*") do (
     set "filename=%%~nxF"
     set "basename=%%~nF"
     set "ext=%%~xF"
