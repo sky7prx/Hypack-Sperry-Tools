@@ -1065,7 +1065,8 @@ Function ReadRawFiles()
             lastLine = GetLastLineFast(folderPath & fileNames(i))
 
             ' If the file ends with FIX, reverse only PTS lines in the captured text.
-            If UCase$(Left$(Trim$(lastLine), 3)) <> "FIX" Then
+            If True = False Then ' Disabled reversing of PTS lines for crashed files
+            ' If UCase$(Left$(Trim$(lastLine), 3)) <> "FIX" Then
                 Dim textLines() As String, ptsLines() As String
                 Dim lineIdx As Long, ptsCount As Long, replaceIdx As Long
 
@@ -1090,86 +1091,84 @@ Function ReadRawFiles()
                     Next lineIdx
                     text = Join(textLines, vbCrLf)
                 End If
-                    End If
+            End If
+
             f.Close
 
-            ' Optionally extend start/end by adding extra UTM PTS lines (cells C9 and C10)
-            If (extendStartMeters > 0) Or (extendEndMeters > 0) Then
-                Dim linesArr() As String, lidx As Long
+            Dim pt1Str As String, ptNStr As String
+
+            ' Extend first leg
+            If (extendStartMeters > 0) Then
+                ' Extract first two PTS points
+                Dim pt1 As Point, pt2 As Point, strPos1 As Integer, strPos2 As Integer
+                strPos1 = InStr(1, text, "PTS ", vbTextCompare)
+                strPos2 = InStr(strPos1 + 4, text, " ", vbTextCompare)
+                pt1.X = Mid(text, strPos1 + 4, strPos2 - (strPos1 + 4))
+                strPos1 = strPos2
+                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
+                pt1.Y = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
+                strPos1 = strPos2
+                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
+                pt2.X = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
+                strPos1 = strPos2
+                strPos2 = InStr(strPos1 + 1, text, " ", vbTextCompare)
+                pt2.Y = Mid(text, strPos1 + 1, strPos2 - (strPos1 + 1))
+
+                Dim laz As Double, dx As Double, dy As Double
+                laz = Sqr((pt2.X - pt1.X) ^ 2 + (pt2.Y - pt1.Y) ^ 2)
+                dx = (pt2.X - pt1.X) / laz
+                dy = (pt2.Y - pt1.Y) / laz
+
+                pt1Str = "PTS " & Format(dx * extendStartMeters + pt1.X, "0.00") & " " & Format(dy * extendStartMeters + pt1.Y, "0.00")
+            End If
+
+            If (extendEndMeters > 0) Then
+                ' Extract last two PTS points
+                Dim ptN1 As Point, ptN2 As Point, strPosN1 As Integer, strPosN2 As Integer
+                strPosN2 = InStrRev(text, "PTS ", -1, vbTextCompare)
+                strPosN1 = InStrRev(text, "PTS ", strPosN2 - 1, vbTextCompare)
+                ptN1.X = Mid(text, strPosN1 + 4, strPosN2 - (strPosN1 + 4))
+                strPosN1 = strPosN2
+                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
+                ptN1.Y = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
+                strPosN1 = strPosN2
+                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
+                ptN2.X = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
+                strPosN1 = strPosN2
+                strPosN2 = InStr(strPosN1 + 1, text, " ", vbTextCompare)
+                ptN2.Y = Mid(text, strPosN1 + 1, strPosN2 - (strPosN1 + 1))
+
+                Dim lazN As Double, dxN As Double, dyN As Double
+                lazN = Sqr((ptN2.X - ptN1.X) ^ 2 + (ptN2.Y - ptN1.Y) ^ 2)
+                dxN = (ptN2.X - ptN1.X) / lazN
+                dyN = (ptN2.Y - ptN1.Y) / lazN
+
+                ptNStr = "PTS " & Format(dxN * extendEndMeters + ptN2.X, "0.00") & " " & Format(dyN * extendEndMeters + ptN2.Y, "0.00")
+            End If
+
+            If extendStartMeters > 0 Or extendEndMeters > 0 Then
+                Dim linesArr() As String, ind As Integer, modText As String, ptsFound As Boolean
                 linesArr = Split(text, vbCrLf)
+                modText = ""
+                ptsFound = True
 
-                ' Collect all PTS coordinates present in this text block
-                Dim ptsE() As Double, ptsN() As Double, ptsCountLocal As Long
-                ptsCountLocal = 0
-                For lidx = LBound(linesArr) To UBound(linesArr)
-                    If Len(Trim(linesArr(lidx))) >= 3 Then
-                        If UCase$(Left$(Trim(linesArr(lidx)), 3)) = "PTS" Then
-                            Dim partsLocal As Variant
-                            partsLocal = Split(Trim(linesArr(lidx)))
-                            If UBound(partsLocal) >= 2 Then
-                                ptsCountLocal = ptsCountLocal + 1
-                                ReDim Preserve ptsE(1 To ptsCountLocal)
-                                ReDim Preserve ptsN(1 To ptsCountLocal)
-                                ptsE(ptsCountLocal) = CDbl(partsLocal(1))
-                                ptsN(ptsCountLocal) = CDbl(partsLocal(2))
-                            End If
+                For ind = LBound(linesArr) To UBound(linesArr)
+                    If ptsFound And UCase$(Left$(Trim(linesArr(ind)), 3)) = "PTS" Then
+                        ptsFound = False
+                        If extendStartMeters > 0 Then
+                            modText = modText & pt1Str & vbCrLf
                         End If
+                        modText = modText & linesArr(ind) & vbCrLf
+                    ElseIf UCase$(Left$(Trim(linesArr(ind)), 3)) = "LNN" Then
+                        If extendEndMeters > 0 Then
+                            modText = modText & ptNStr & vbCrLf
+                        End If
+                        modText = modText & linesArr(ind) & vbCrLf
+                    Else
+                        modText = modText & linesArr(ind) & vbCrLf
                     End If
-                Next lidx
-
-                Dim newStartLine As String, newEndLine As String
-                newStartLine = ""
-                newEndLine = ""
-
-                If ptsCountLocal >= 2 Then
-                    Dim dx As Double, dy As Double, dlen As Double, ux As Double, uy As Double
-                    ' Compute start extension (before first point)
-                    If extendStartMeters > 0 Then
-                        dx = ptsE(2) - ptsE(1)
-                        dy = ptsN(2) - ptsN(1)
-                        dlen = Sqr(dx * dx + dy * dy)
-                        If dlen > 0 Then
-                            ux = dx / dlen: uy = dy / dlen
-                            newStartLine = "PTS " & Format(ptsE(1) - ux * extendStartMeters, "0.000000") & " " & Format(ptsN(1) - uy * extendStartMeters, "0.000000")
-                        End If
-                    End If
-
-                    ' Compute end extension (after last point)
-                    If extendEndMeters > 0 Then
-                        dx = ptsE(ptsCountLocal) - ptsE(ptsCountLocal - 1)
-                        dy = ptsN(ptsCountLocal) - ptsN(ptsCountLocal - 1)
-                        dlen = Sqr(dx * dx + dy * dy)
-                        If dlen > 0 Then
-                            ux = dx / dlen: uy = dy / dlen
-                            newEndLine = "PTS " & Format(ptsE(ptsCountLocal) + ux * extendEndMeters, "0.000000") & " " & Format(ptsN(ptsCountLocal) + uy * extendEndMeters, "0.000000")
-                        End If
-                    End If
-                End If
-
-                ' If we have new lines to insert, rebuild the text inserting at the first and/or last PTS positions
-                If newStartLine <> "" Or newEndLine <> "" Then
-                    Dim newText As String
-                    newText = ""
-                    Dim firstPIdx As Long, lastPIdx As Long
-                    firstPIdx = -1: lastPIdx = -1
-                    For lidx = LBound(linesArr) To UBound(linesArr)
-                        If Len(Trim(linesArr(lidx))) >= 3 And UCase$(Left$(Trim(linesArr(lidx)), 3)) = "PTS" Then
-                            If firstPIdx = -1 Then firstPIdx = lidx
-                            lastPIdx = lidx
-                        End If
-                    Next lidx
-
-                    For lidx = LBound(linesArr) To UBound(linesArr)
-                        If lidx = firstPIdx And newStartLine <> "" Then
-                            newText = newText & newStartLine & vbCrLf
-                        End If
-                        newText = newText & linesArr(lidx) & vbCrLf
-                        If lidx = lastPIdx And newEndLine <> "" Then
-                            newText = newText & newEndLine & vbCrLf
-                        End If
-                    Next lidx
-                    text = newText
-                End If
+                Next ind
+                text = modText
             End If
 
             textFiles(i) = text
