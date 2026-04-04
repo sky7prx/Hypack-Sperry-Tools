@@ -26,13 +26,13 @@ echo.
 echo Update complete.
 pause
 
-set /p "copyfile=Copy the new file to the desktop? (y/n) "
+set /p "copyfile=Copy the new file to the Desktop\Sperry folder? (y/n) "
 
 if /I not "%copyfile%"=="y" goto theend
 
 setlocal enabledelayedexpansion
 
-set "dest=%USERPROFILE%\Desktop"
+set "dest=%USERPROFILE%\Desktop\Sperry"
 
 echo Copy file to: %dest%
 
