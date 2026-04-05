@@ -5,6 +5,21 @@ Type Point
     Y As Double
 End Type
 
+Type PointUTM
+    E As Double
+    N As Double
+End Type
+
+Public NextRunTime As Date
+
+Private Sub Workbook_Open()
+    Call StartTimer
+End Sub
+
+Private Sub Workbook_BeforeClose()
+    Call StopTimer
+End Sub
+
 'This conversion script was written by Anthony Imberi (anthony.imberi@noaa.gov)
 'Written August 2025
 'This script can be used to convert Hypack LNW files into route files that can be imported to a Sperry ECDIS
@@ -475,6 +490,177 @@ EndEarly:
     
 End Sub
 
+Sub StartTimer()
+    NextRunTime = Now + TimeValue("00:01:00")
+    Application.OnTime NextRunTime, "SaveAutolineData"
+End Sub
+
+Sub SaveAutolineData()
+    On Error GoTo AutolineError
+    Dim projectFolder As String, outputFolder As String, recentFile As String
+    
+    Debug.Print "Start autoline backup"
+    
+    projectFolder = Sheets("Autoline Extractor").Range("F2").Value & "\Raw\"
+    projectFolder = Replace(projectFolder, "\\", "\") ' Fix for if user gave folder with \ at the end
+    outputFolder = Environ("USERPROFILE") & "\Desktop\Sperry\Hypack-Sperry-Tools\Autolines\"
+    recentFile = GetMostRecentRawFile(projectFolder)
+    
+    Debug.Print "Reading file: " & recentFile
+    
+    Dim fso As Object, file As textStream, keepSearching As Boolean, startWriting As Boolean, count As Integer
+    Dim textLine As String, utmZone As Variant, centMer As Integer, parts As Variant, fileTime As Date, timeStr As String, text As String, tndLine As String, numLines As Integer
+    keepSearching = True
+    startWriting = False
+    utmZone = False
+    text = ""
+    count = 0
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set file = fso.OpenTextFile(recentFile, ForReading)
+    
+    Do While keepSearching
+        textLine = file.ReadLine
+        If textLine Like "INI ZoneName=*" Then
+            utmZone = CInt(ExtractNumbers(Mid(textLine, 19, 2)))
+        End If
+        If textLine Like "INI CentralMeridian=*" Then
+            centMer = CInt(ExtractNumbers(Mid(textLine, Len("INI CentralMeridian="), 4)))
+        End If
+        If textLine Like "TND*" Then
+            tndLine = textLine
+            parts = Split(textLine)
+            If UBound(parts) >= 2 Then
+                fileTime = CDate(parts(2) & " " & parts(1))
+                timeStr = Format(fileTime, "HH.nn yyyy-mm-dd")
+            End If
+        End If
+        If textLine Like "LIN #*" Then
+            startWriting = True
+            numLines = CInt(ExtractNumbers(Mid(textLine, Len("LIN "))))
+        End If
+        If startWriting Then
+            If textLine Like "LBP*" Then
+                ' Do Nothing
+            ElseIf textLine Like "LNN*" Then
+                text = text & textLine & " " & timeStr & vbCrLf
+            Else
+                text = text & textLine & vbCrLf
+                count = count + 1
+            End If
+        End If
+        If textLine Like "EOL*" Then keepSearching = False
+    Loop
+    
+    file.Close
+    
+    parts = Split(recentFile, "\")
+    recentFile = parts(UBound(parts))
+    parts = Split(recentFile, ".")
+    recentFile = parts(LBound(parts))
+    
+    If fso.FileExists(outputFolder & recentFile & " " & timeStr & ".lnw") Then
+        Set file = fso.OpenTextFile(outputFolder & recentFile & " " & timeStr & ".lnw", ForReading)
+    Else
+        GoTo SkipCompare
+    End If
+    
+    Dim prevLines As Integer
+    keepSearching = True
+    startWriting = False
+    prevLines = 0
+    
+    Do While keepSearching
+        textLine = file.ReadLine
+        If textLine Like "LIN*" Then
+            prevLines = CInt(ExtractNumbers(Mid(textLine, Len("LIN "))))
+            keepSearching = False
+        ElseIf textLine Like "EOL*" Then keepSearching = False
+        End If
+    Loop
+    
+    file.Close
+    
+    Dim completeTime As String
+    completeTime = Format(Now, "HH:nn yyyy-mm-dd")
+    If numLines <= prevLines Then
+        Debug.Print "No updates found"
+        Sheets("Autoline Extractor").Range("K7").Value = completeTime
+        GoTo AutolineError
+    End If
+    
+SkipCompare:
+    
+    Set file = fso.CreateTextFile(outputFolder & recentFile & " " & timeStr & ".lnw", True)
+    
+    If utmZone = False Then
+        utmZone = CInt(WorksheetFunction.Floor((centMer + 180) / 6, 1) + 1)
+    End If
+    
+    file.WriteLine "ZON " & utmZone
+    file.WriteLine tndLine
+    file.WriteLine ("LNS 1")
+    file.Write text
+    
+    
+    completeTime = Format(Now, "HH:nn yyyy-mm-dd")
+    Sheets("Autoline Extractor").Range("K6").Value = recentFile
+    Sheets("Autoline Extractor").Range("K7").Value = completeTime
+    Sheets("Autoline Extractor").Range("K8").Value = completeTime
+    
+    Debug.Print "Autoline backup complete at " & completeTime
+    
+AutolineError:
+    Set file = Nothing
+    Set fso = Nothing
+    
+    Call StartTimer
+    completeTime = Format(Now, "HH:nn yyyy-mm-dd")
+    Debug.Print "Exiting autoline backup at " & completeTime
+End Sub
+
+Sub StopTimer()
+    On Error Resume Next
+    Application.OnTime NextRunTime, "SaveAutolineData", , False
+End Sub
+
+Sub RestartTimer()
+    Call StopTimer
+    Call StartTimer
+End Sub
+
+Function GetMostRecentRawFile(fldPath As String) As String
+    Dim fso As Object
+    Dim folder As Object
+    Dim file As Object
+    Dim latestDate As Date
+    Dim latestFileName As String
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    If Not fso.FolderExists(fldPath) Then
+        GetMostRecentRawFile = ""
+        Exit Function
+    End If
+    
+    Set folder = fso.GetFolder(fldPath)
+    
+    ' Loop through files
+    For Each file In folder.Files
+        ' Check if extension is "RAW" (UCase handles .raw or .RAW)
+        If UCase(fso.GetExtensionName(file.name)) = "RAW" Then
+            If file.DateLastModified > latestDate Then
+                latestDate = file.DateLastModified
+                latestFileName = file.path
+            End If
+        End If
+    Next file
+    
+    GetMostRecentRawFile = latestFileName
+    
+    Set fso = Nothing
+    Set folder = Nothing
+End Function
+
 Function IsFileOpen(fileName As String) As Boolean
     On Error Resume Next
     Dim ff As Long
@@ -645,7 +831,7 @@ Private Function calcLaz(latOne As Double, lonOne As Double, latTwo As Double, l
 End Function
 
 'Convert UTM to Lat/Lon Coordinates (WGS84)
-Private Function UTMtoLatLon(E As Double, n As Double, utmZone As Integer) As Double()
+Private Function UTMtoLatLon(E As Double, N As Double, utmZone As Integer) As Double()
     Dim zone As Integer
     Dim a As Double, f As Double, e2 As Double, ep2 As Double, kZero As Double
     Dim FE As Double, FN As Double, lambdaZero As Double
@@ -668,7 +854,7 @@ Private Function UTMtoLatLon(E As Double, n As Double, utmZone As Integer) As Do
     lambdaZero = (-183 + 6 * zone) * WorksheetFunction.Pi / 180
 
     X = E - FE
-    Y = n - FN
+    Y = N - FN
 
     M = Y / kZero
 
@@ -710,7 +896,7 @@ Private Function LatLonToUTM(latDeg As Double, lonDeg As Double) As Double()
     Dim a As Double, f As Double, e2 As Double, ep2 As Double, kZero As Double
     Dim FE As Double, FN As Double, lambdaZero As Double
     Dim latRad As Double, lonRad As Double
-    Dim n As Double, t As Double, C As Double, bigA As Double
+    Dim N As Double, t As Double, C As Double, bigA As Double
     Dim M As Double
     Dim E As Double, Nnorth As Double
     Dim utm(1) As Double
@@ -732,7 +918,7 @@ Private Function LatLonToUTM(latDeg As Double, lonDeg As Double) As Double()
     lonRad = lonDeg * WorksheetFunction.Pi / 180#
     
     ' Precompute terms
-    n = a / Sqr(1 - e2 * Sin(latRad) ^ 2)
+    N = a / Sqr(1 - e2 * Sin(latRad) ^ 2)
     t = Tan(latRad) ^ 2
     C = ep2 * Cos(latRad) ^ 2
     bigA = (lonRad - lambdaZero) * Cos(latRad)
@@ -744,11 +930,11 @@ Private Function LatLonToUTM(latDeg As Double, lonDeg As Double) As Double()
         - (35 * e2 ^ 3 / 3072) * Sin(6 * latRad))
     
     ' Easting
-    E = FE + kZero * n * (bigA + (1 - t + C) * bigA ^ 3 / 6 _
+    E = FE + kZero * N * (bigA + (1 - t + C) * bigA ^ 3 / 6 _
         + (5 - 18 * t + t ^ 2 + 72 * C - 58 * ep2) * bigA ^ 5 / 120)
     
     ' Northing (assuming northern hemisphere here)
-    Nnorth = kZero * (M + n * Tan(latRad) * (bigA ^ 2 / 2 _
+    Nnorth = kZero * (M + N * Tan(latRad) * (bigA ^ 2 / 2 _
         + (5 - t + 9 * C + 4 * C ^ 2) * bigA ^ 4 / 24 _
         + (61 - 58 * t + t ^ 2 + 600 * C - 330 * ep2) * bigA ^ 6 / 720))
     
@@ -762,7 +948,7 @@ End Function
 ' side = "Left" for left, "Right" for right
 ' Inputs: arrays E() and N() of same length (polyline vertices)
 ' Returns: 2D array (2 x nPoints): result(0,i)=Easting, result(1,i)=Northing
-Public Function OffsetPolyline(E() As Double, n() As Double, dist As Double, side As String) As Double()
+Public Function OffsetPolyline(E() As Double, N() As Double, dist As Double, side As String) As Double()
     Dim smN As Long
     smN = UBound(E) - LBound(E) + 1
     If smN < 2 Then Err.Raise vbObjectError + 520, , "Polyline must have at least two points."
@@ -790,17 +976,17 @@ Public Function OffsetPolyline(E() As Double, n() As Double, dist As Double, sid
         If i = LBound(E) Then
             ' First point: use segment i->i+1
             dx = E(i + 1) - E(i)
-            dy = n(i + 1) - n(i)
+            dy = N(i + 1) - N(i)
         ElseIf i = UBound(E) Then
             ' Last point: use segment i-1->i
             dx = E(i) - E(i - 1)
-            dy = n(i) - n(i - 1)
+            dy = N(i) - N(i - 1)
         Else
             ' Interior point: average segment before and after
             prevDx = E(i) - E(i - 1)
-            prevDy = n(i) - n(i - 1)
+            prevDy = N(i) - N(i - 1)
             nextDx = E(i + 1) - E(i)
-            nextDy = n(i + 1) - n(i)
+            nextDy = N(i + 1) - N(i)
             dx = prevDx + nextDx
             dy = prevDy + nextDy
         End If
@@ -816,7 +1002,7 @@ Public Function OffsetPolyline(E() As Double, n() As Double, dist As Double, sid
         
         ' Scale and offset
         result(0, i) = E(i) + px * dist
-        result(1, i) = n(i) + py * dist
+        result(1, i) = N(i) + py * dist
     Next i
     
     OffsetPolyline = result
@@ -872,10 +1058,10 @@ Function ShiftLine()
     
     ReDim wptDetails(0 To 1, 0 To wptCount - 1)
     
-    Dim E() As Double, n() As Double, shifted() As Double, conversion() As Double
+    Dim E() As Double, N() As Double, shifted() As Double, conversion() As Double
     Dim count As Integer, latPos As Integer, lat As Double, lonPos As Integer, lon As Double
     ReDim E(0 To wptCount - 1)
-    ReDim n(0 To wptCount - 1)
+    ReDim N(0 To wptCount - 1)
     
     ' Save all of the waypoints as Lat/Lon and also as UTM Easting/Northing
     count = 0
@@ -890,11 +1076,11 @@ Function ShiftLine()
         wptDetails(1, count - 1) = lon
         conversion = LatLonToUTM(lat, lon)
         E(count - 1) = conversion(0)
-        n(count - 1) = conversion(1)
+        N(count - 1) = conversion(1)
     Loop
     
     ' Shift the UTM coordinates right or left by the number of meters specified
-    shifted = OffsetPolyline(E, n, meters, rl)
+    shifted = OffsetPolyline(E, N, meters, rl)
     
     Dim newLatLon() As Double, latlon() As Double, zone As Integer
     ReDim newLatLon(0 To 1, 0 To wptCount - 1)
@@ -963,18 +1149,27 @@ Function ReadRawFiles()
     outputPath = CStr(Range("F3").Value)
     hoursBack = CDbl(Range("F4").Value)
     ' Read optional extension distances (meters) for start/end of track
-    Dim extendStartMeters As Double, extendEndMeters As Double
+    Dim extendStartMeters As Double, extendEndMeters As Double, combine As Double, lazDiff As Double, backup As String, fileExt As String
     extendStartMeters = 0
     extendEndMeters = 0
     If IsNumeric(Range("C10").Value) Then extendStartMeters = CDbl(Range("C10").Value) ' Reverse input order (C9/C10) to account for reversed route
     If IsNumeric(Range("C9").Value) Then extendEndMeters = CDbl(Range("C9").Value)
+    combine = CDbl(Range("C11").Value)
+    lazDiff = 100
+    backup = CStr(Range("C12").Value)
     
-    ' Check formatting of the path
-    If Right(folderPath, 1) <> "\" Then
-        folderPath = folderPath & "\"
-    End If
-    If Right(folderPath, 4) <> "Raw\" Then
-        folderPath = folderPath & "Raw\"
+    If backup = "Yes" Then
+        folderPath = Environ("USERPROFILE") & "\Desktop\Sperry\Hypack-Sperry-Tools\Autolines\"
+        fileExt = ".lnw"
+    Else
+        fileExt = ".raw"
+        ' Check formatting of the path
+        If Right(folderPath, 1) <> "\" Then
+            folderPath = folderPath & "\"
+        End If
+        If Right(folderPath, 4) <> "Raw\" Then
+            folderPath = folderPath & "Raw\"
+        End If
     End If
     If Right(outputPath, 1) <> "\" Then
         outputPath = outputPath & "\"
@@ -988,12 +1183,12 @@ Function ReadRawFiles()
 
     count = 0
     ' Loop through each file in the folder
-    For Each file In folder.files
+    For Each file In folder.Files
         ' Perform actions with each file, e.g., print its name
         ' Match any file with a .raw extension (case-insensitive). This avoids skipping
         ' filenames that contain spaces or other characters that the previous Like
         ' pattern didn't capture.
-        If LCase(Right(file.name, 4)) = ".raw" Then
+        If LCase(Right(file.name, 4)) = fileExt Then
             If isBetween(file.path, hoursBack) Then
                 count = count + 1
                 ReDim Preserve fileNames(1 To count)
@@ -1022,8 +1217,10 @@ Function ReadRawFiles()
             Do While keepSearching
                 textLine = f.ReadLine
                 If textLine Like "INI ZoneName=*" Then
-                    utmZone = CInt(ExtractNumbers(Mid(textLine, 19, 2)))
-                    'text = text & "ZON " & utmZone & vbCrLf
+                    utmZone = CInt(ExtractNumbers(Mid(textLine, Len("INI ZoneName="))))
+                End If
+                If textLine Like "ZON*" Then
+                    utmZone = CInt(ExtractNumbers(Mid(textLine, Len("ZON "))))
                 End If
                 If textLine Like "INI CentralMeridian=*" Then
                     centMer = CInt(ExtractNumbers(Mid(textLine, Len("INI CentralMeridian="), 4)))
@@ -1257,6 +1454,21 @@ Cleanup:
     On Error Resume Next
     If FileNum > 0 Then Close #FileNum
     GetLastLineFast = result
+End Function
+
+Function ProcessRouteMerging(xte As Double, lazDiff As Double)
+    Dim allRoutes As New Collection
+    Dim i As Long
+    
+    If allRoutes.count < 2 Then Exit Function
+    
+    Dim currentRoute() As PointUTM, nextRoute() As PointUTM
+    ' currentRoute = allRoutes(i)
+    
+    ' For i = 2 To allRoutes.count
+        ' nextRoute = allRoutes(i)
+        
+        ' If CanCombine(
 End Function
 
 Function isBetween(filePath As String, hoursBack As Double) As Boolean

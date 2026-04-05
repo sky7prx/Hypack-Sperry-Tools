@@ -3,6 +3,7 @@
 *~$*
 *.tmp
 *.temp
+.DS_Store
 
 # Ignore user-specific setting files
 *.usr
