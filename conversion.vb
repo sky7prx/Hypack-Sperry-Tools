@@ -24,7 +24,7 @@ End Sub
 'Written August 2025
 'This script can be used to convert Hypack LNW files into route files that can be imported to a Sperry ECDIS
 Sub readLnw(Optional inputFile As String)
-    Dim name As String, prefix As String, suffix As String, speed As Double, dpm As Double, xtd As Double, reverse As Boolean, utmZone As Integer
+    Dim name As String, prefix As String, suffix As String, speed As Double, radius As Double, dpm As Double, xtd As Double, reverse As Boolean, utmZone As Integer
     Dim lineName As String, wptName As String, lat As Double, lon As Double
     'Dim fso As Object, ts As Object
     Dim textLine As String, text As String
@@ -45,9 +45,11 @@ Sub readLnw(Optional inputFile As String)
     prefix = CStr(Range("C2").Value)
     suffix = CStr(Range("C3").Value)
     speed = CDbl(Range("C4").Value)
-    dpm = CDbl(Range("C5").Value)
+    radius = CDbl(Range("C5").Value)
     xtd = CDbl(Range("C6").Value)
     reverse = Range("C7").Value = "Yes"
+
+    dpm = RotCalc(speed, radius) ' Calculate the degrees per minute at the given speed and turn radius
     
     'Open the source file and read its contents into a string
     'Set fso = CreateObject("Scripting.FileSystemObject")
@@ -165,13 +167,13 @@ Sub readLnw(Optional inputFile As String)
                 pt2.Y = northing
                 pt2.X = easting
                 
-                If MetersToNM(Distance(pt1, pt2)) > RadiusCalc(speed, dpm) Then
+                If MetersToNM(Distance(pt1, pt2)) > radius Then
                     routeDetails(1 + i, jCount * 2) = lat ' Save Lat if the distance between points exceeds the turn radius
                     routeDetails(1 + i, 1 + (jCount * 2)) = lon ' Save Lon if the distance between points exceeds the turn radius
                     jCount = jCount + 1
                 Else
                     Debug.Print "WPT " & j & " skipped because the turn radius is greater than its distance to the previous waypoint"
-                    Debug.Print "distance:", MetersToNM(Distance(pt1, pt2)), "radius:", RadiusCalc(speed, dpm)
+                    Debug.Print "distance:", MetersToNM(Distance(pt1, pt2)), "radius:", radius
                 End If
             
             Else
@@ -352,7 +354,7 @@ NextRowIteration1:
             ElseIf C Mod 2 = 1 Then
                 If routeDetails(r, C) = "" Then GoTo NextColIteration
                 colLon = routeDetails(r, C)
-                PrintWaypoint wptNum, "WPT " & wptNum, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), fileNum1
+                PrintWaypoint wptNum, "WPT " & wptNum, colLat, colLon, speed, xtd, radius, fileNum1
                 wptNum = wptNum + 1
             End If
             
@@ -379,7 +381,7 @@ NextColIteration:
                         wptNm = Left(routeDetails(1, C), Len(routeDetails(1, C)) - 4)
                     End If
                     
-                    PrintWaypoint wptNum, wptNm, colLat, colLon, speed, xtd, RadiusCalc(speed, dpm), fileNum2
+                    PrintWaypoint wptNum, wptNm, colLat, colLon, speed, xtd, radius, fileNum2
                     wptNum = wptNum + 1
                 ElseIf C Mod 2 = 1 Then
                     If routeDetails(r, C) = "" Then GoTo NextColRevIteration
@@ -742,6 +744,10 @@ End Sub
 Private Function RadiusCalc(speed As Double, Optional dpm As Double)
     If dpm = 0 Then dpm = 100 ' dpm specifies the number of degrees per minute to turn
     RadiusCalc = Format(speed / 60 * (360 / dpm) / (2 * Application.WorksheetFunction.Pi()), "0.000000000000000")
+End Function
+
+Private Function RotCalc(speed As Double, radius As Double)
+    RotCalc = Format(60 * (2 * Application.WorksheetFunction.Pi() * radius) / speed, "0.000000000000000")
 End Function
 
 ' Distance in meters between two lat/lon points
