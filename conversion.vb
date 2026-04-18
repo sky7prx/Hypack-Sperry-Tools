@@ -211,10 +211,8 @@ Sub readLnw(Optional inputFile As String)
         DeleteFile (path & "*.rtz")
     End If
     
-    Dim r As Integer, C As Integer, startLaz() As Integer, endLaz() As Integer, lineWptNum() As Integer
-    ReDim startLaz(1 To routeCount + 1)
-    ReDim endLaz(1 To routeCount + 1)
-    ReDim lineWptNum(1 To routeCount + 1)
+    Dim r As Integer, C As Integer, routeLaz() As Integer
+    ReDim routeLaz(1 To routeCount + 1)
     For r = LBound(routeDetails, 1) To UBound(routeDetails, 1)
         If r = 1 Then
             GoTo NextRowIteration1
@@ -224,23 +222,8 @@ Sub readLnw(Optional inputFile As String)
             GoTo NextRowIteration1
         End If
         
-        'Find the line azimuth so we can specify it in the file name
-        Dim lazBase As Integer, lazRev As Integer
-        
-        If routeDetails(r, 2) <> "" And routeDetails(r, 3) <> "" And routeDetails(r, 4) <> "" And routeDetails(r, 5) <> "" Then
-            lazBase = CInt(calcLaz(CDbl(routeDetails(r, 2)), CDbl(routeDetails(r, 3)), CDbl(routeDetails(r, 4)), CDbl(routeDetails(r, 5))))
-        End If
-        
-        ' Save a list of start and end azimuths so we can compare to find lines that should be combined
-        startLaz(r) = lazBase
-        i = 2
-        Do While i <= (maxWpt * 2) - 2
-            If routeDetails(r, i) <> "" And routeDetails(r, i + 1) <> "" And routeDetails(r, i + 2) <> "" And routeDetails(r, i + 3) <> "" Then
-                endLaz(r) = CInt(calcLaz(CDbl(routeDetails(r, i)), CDbl(routeDetails(r, i + 1)), CDbl(routeDetails(r, i + 2)), CDbl(routeDetails(r, i + 3))))
-                lineWptNum(r) = (i / 2) + 1
-            End If
-            i = i + 2
-        Loop
+        ' Calculate a distance-weighted average azimuth for route naming.
+        routeLaz(r) = (CInt(averageLaz(routeDetails, r, maxWpt)) + 360) Mod 360
         
 NextRowIteration1:
     Next r
@@ -293,8 +276,8 @@ NextRowIteration1:
         End If
         
         Dim lazBaseStr As String, lazRevStr As String
-        lazBaseStr = CStr(startLaz(r))
-        lazRevStr = CStr(((endLaz(r) + 180) + 360) Mod 360)
+        lazBaseStr = CStr(routeLaz(r))
+        lazRevStr = CStr(((routeLaz(r) + 180) + 360) Mod 360)
         
         Do While Len(lazBaseStr) < 3
             lazBaseStr = "0" & lazBaseStr
@@ -479,10 +462,21 @@ NextRowIteration2:
     
     Dim msg As String
     If reverse Then
-        msg = "Successfully saved " & routeCount & " routes and " & routeCount & " reversed routes to the folder containing the Hypack output file."
+        msg = "Successfully saved " & routeCount & " routes and " & routeCount & " reversed routes."
     Else
-        msg = "Successfully saved " & routeCount & " routes to the folder containing the Hypack output file."
+        msg = "Successfully saved " & routeCount & " routes."
     End If
+
+    msg = msg & vbCrLf & vbCrLf & "Found routes:" & vbCrLf
+
+    Dim ct As Integer
+    ct = 1
+    while ct < routeCount + 1
+        If routeDetails(ct, 2) <> "" Then
+            msg = msg & vbCrLf & routeDetails(ct, 1)
+        End If
+        ct = ct + 1
+    Wend
     
     MsgBox (msg)
     
@@ -828,6 +822,50 @@ Private Function calcLaz(latOne As Double, lonOne As Double, latTwo As Double, l
     If az < 0 Then az = az + 360#
 
     calcLaz = az
+End Function
+
+' Calculate a distance-weighted average azimuth for a full route.
+' Uses leg length as the weight so longer legs contribute proportionally more.
+Private Function averageLaz(routeDetails As Variant, routeRow As Integer, maxWpt As Integer) As Double
+    Dim i As Integer
+    Dim lat1 As Double, lon1 As Double, lat2 As Double, lon2 As Double
+    Dim legAz As Double, legDist As Double
+    Dim xComp As Double, yComp As Double
+    Dim avgAz As Double
+    Dim p1 As Point, p2 As Point
+
+    xComp = 0
+    yComp = 0
+
+    For i = 2 To (maxWpt * 2) - 2 Step 2
+        If routeDetails(routeRow, i) <> "" And routeDetails(routeRow, i + 1) <> "" And routeDetails(routeRow, i + 2) <> "" And routeDetails(routeRow, i + 3) <> "" Then
+            lat1 = CDbl(routeDetails(routeRow, i))
+            lon1 = CDbl(routeDetails(routeRow, i + 1))
+            lat2 = CDbl(routeDetails(routeRow, i + 2))
+            lon2 = CDbl(routeDetails(routeRow, i + 3))
+
+            p1.Y = lat1
+            p1.X = lon1
+            p2.Y = lat2
+            p2.X = lon2
+            legDist = Distance(p1, p2)
+
+            If legDist > 0 Then
+                legAz = calcLaz(lat1, lon1, lat2, lon2) * WorksheetFunction.Pi / 180#
+                xComp = xComp + Sin(legAz) * legDist
+                yComp = yComp + Cos(legAz) * legDist
+            End If
+        End If
+    Next i
+
+    If xComp = 0 And yComp = 0 Then
+        averageLaz = 0
+        Exit Function
+    End If
+
+    avgAz = WorksheetFunction.Atan2(xComp, yComp) * 180# / WorksheetFunction.Pi
+    If avgAz < 0 Then avgAz = avgAz + 360#
+    averageLaz = avgAz
 End Function
 
 'Convert UTM to Lat/Lon Coordinates (WGS84)
